@@ -1,0 +1,17 @@
+{
+  "name": "sim-roads",
+  "version": "0.1.0",
+  "description": "Web-based traffic simulator with a track editor and a rules-based behavior engine.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --outfile=.smoke.mjs && node .smoke.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}
