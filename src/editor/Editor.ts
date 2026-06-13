@@ -35,32 +35,69 @@ export class Editor {
 
   constructor(private net: RoadNetwork, private camera: Camera) {}
 
-  /** True if the editor consumed the press (so the app shouldn't pan). */
-  onPointerDown(world: Vec2): boolean {
+  /**
+   * Try to start dragging a node or Bézier handle (select tool only). Returns
+   * true if a drag began, so the caller knows not to treat the gesture as a pan.
+   */
+  beginDrag(world: Vec2): boolean {
+    this.cursorWorld = world;
+    if (this.tool !== "select") return false;
+
+    // Bézier handle of the selected segment takes priority.
+    if (this.selectedSegment) {
+      const seg = this.net.segments.get(this.selectedSegment);
+      if (seg) {
+        if (dist(seg.h1, world) < this.pickRadius()) {
+          this.drag = { kind: "handle", segId: seg.id, which: "h1" };
+          return true;
+        }
+        if (dist(seg.h2, world) < this.pickRadius()) {
+          this.drag = { kind: "handle", segId: seg.id, which: "h2" };
+          return true;
+        }
+      }
+    }
+    const node = this.nodeAt(world);
+    if (node) {
+      this.drag = { kind: "node", id: node.id };
+      return true;
+    }
+    return false;
+  }
+
+  /** Apply the active tool at a tapped/clicked point (no drag). */
+  tap(world: Vec2): void {
     this.cursorWorld = world;
     switch (this.tool) {
       case "select":
-        return this.startSelectOrDrag(world);
+        this.selectedSegment = this.segmentAt(world)?.id ?? null;
+        break;
       case "road":
         this.placeRoad(world);
-        return true;
+        break;
       case "sign":
         this.cycleSign(world);
-        return true;
+        break;
       case "delete":
         this.deleteAt(world);
-        return true;
+        break;
       case "connect":
-        return this.placeLink(world);
+        this.placeLink(world);
+        break;
     }
   }
 
-  onPointerMove(world: Vec2): void {
+  /** Update hover/cursor state (called on move, and on touch press). */
+  hover(world: Vec2): void {
     this.cursorWorld = world;
     this.hoverNode = this.nodeAt(world)?.id ?? null;
     if (this.tool === "connect") {
       this.linkHoverNode = this.nearestNode(world, 40)?.id ?? null;
     }
+  }
+
+  onPointerMove(world: Vec2): void {
+    this.hover(world);
     if (!this.drag) return;
     if (this.drag.kind === "node") {
       this.net.moveNode(this.drag.id, world);
@@ -68,6 +105,11 @@ export class Editor {
       const seg = this.net.segments.get(this.drag.segId);
       if (seg) this.net.updateSegment(seg.id, { [this.drag.which]: { ...world } });
     }
+  }
+
+  /** True while a node/handle drag is in progress. */
+  get isDragging(): boolean {
+    return this.drag != null;
   }
 
   onPointerUp(): void {
@@ -99,6 +141,17 @@ export class Editor {
       if (lane.fromNode === node) {
         out.push({ ref, node, pos: lane.poly.posAt(0), kind: "out" });
       }
+    }
+    return out;
+  }
+
+  /** All lane anchors across every node (one pass), for the connector overlay. */
+  allAnchors(): LaneAnchor[] {
+    const out: LaneAnchor[] = [];
+    for (const lane of this.net.graph.lanes) {
+      const ref: LaneRef = { segment: lane.segment, dir: lane.dir, index: lane.index };
+      out.push({ ref, node: lane.toNode, pos: lane.poly.posAt(lane.poly.length), kind: "in" });
+      out.push({ ref, node: lane.fromNode, pos: lane.poly.posAt(0), kind: "out" });
     }
     return out;
   }
@@ -138,31 +191,6 @@ export class Editor {
   }
 
   /* --------------------------- tools ----------------------------- */
-
-  private startSelectOrDrag(world: Vec2): boolean {
-    // Bézier handle of the selected segment takes priority.
-    if (this.selectedSegment) {
-      const seg = this.net.segments.get(this.selectedSegment);
-      if (seg) {
-        if (dist(seg.h1, world) < this.pickRadius()) {
-          this.drag = { kind: "handle", segId: seg.id, which: "h1" };
-          return true;
-        }
-        if (dist(seg.h2, world) < this.pickRadius()) {
-          this.drag = { kind: "handle", segId: seg.id, which: "h2" };
-          return true;
-        }
-      }
-    }
-    const node = this.nodeAt(world);
-    if (node) {
-      this.drag = { kind: "node", id: node.id };
-      return true;
-    }
-    const seg = this.segmentAt(world);
-    this.selectedSegment = seg?.id ?? null;
-    return seg != null;
-  }
 
   private placeRoad(world: Vec2): void {
     const existing = this.nodeAt(world);

@@ -26,6 +26,20 @@ export function buildUI(app: App, root: HTMLElement): void {
   const h = el("div", "panel");
   root.appendChild(h);
 
+  // ---- Floating toggle to collapse the panel (key on mobile) ----
+  let toggle = document.getElementById("panel-toggle") as HTMLButtonElement | null;
+  if (!toggle) {
+    toggle = document.createElement("button");
+    toggle.id = "panel-toggle";
+    document.body.appendChild(toggle);
+  }
+  const syncToggle = () => (toggle!.textContent = root.classList.contains("hidden") ? "☰" : "✕");
+  toggle.onclick = () => {
+    root.classList.toggle("hidden");
+    syncToggle();
+  };
+  syncToggle();
+
   // ---- Header / mode toggle ----
   h.appendChild(title("SimRoads"));
   const modeRow = el("div", "row seg-toggle");

@@ -292,10 +292,9 @@ export class Renderer {
   private drawConnectMode(opts: RenderOptions): void {
     const ctx = this.ctx;
 
-    // Existing connectors at the hovered node.
-    if (opts.linkHoverNode) {
+    // Existing connectors (the current turn movements).
+    {
       for (const conn of this.net.graph.connectors) {
-        if (conn.node !== opts.linkHoverNode) continue;
         const pts = conn.poly.points;
         this.stroke(pts, 0.4, COLORS.connector);
         // Arrowhead at the end to show direction.

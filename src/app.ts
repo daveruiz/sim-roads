@@ -27,8 +27,20 @@ export class App {
   onChange: () => void = () => {};
 
   private lastTime = 0;
-  private panning = false;
-  private lastPointer: Vec2 = { x: 0, y: 0 };
+  // Active pointers (mouse or touch) for gesture handling.
+  private pointers = new Map<number, Vec2>();
+  // Single-pointer interaction state.
+  private press: {
+    startScreen: Vec2;
+    lastScreen: Vec2;
+    moved: boolean;
+    dragging: boolean;
+    canTap: boolean; // only the primary button / touch triggers a tool action
+  } | null = null;
+  // Two-finger pinch/pan gesture baseline.
+  private gesture: { dist: number; mid: Vec2 } | null = null;
+
+  private readonly TAP_THRESHOLD = 8; // px of movement before a press becomes a pan
 
   constructor(public canvas: HTMLCanvasElement) {
     this.net = PRESETS[0].build();
@@ -135,10 +147,7 @@ export class App {
       connectMode,
       linkHoverNode: connectMode ? this.editor.linkHoverNode : null,
       linkFrom: connectMode ? this.editor.linkFrom?.ref ?? null : null,
-      anchors:
-        connectMode && this.editor.linkHoverNode
-          ? this.editor.anchorsAt(this.editor.linkHoverNode)
-          : [],
+      anchors: connectMode ? this.editor.allAnchors() : [],
     };
   }
 
@@ -148,7 +157,8 @@ export class App {
     const c = this.canvas;
     c.addEventListener("pointerdown", (e) => this.onDown(e));
     c.addEventListener("pointermove", (e) => this.onMove(e));
-    window.addEventListener("pointerup", () => this.onUp());
+    window.addEventListener("pointerup", (e) => this.onUp(e));
+    window.addEventListener("pointercancel", (e) => this.onUp(e));
     c.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     c.addEventListener("contextmenu", (e) => e.preventDefault());
     window.addEventListener("keydown", (e) => this.onKey(e));
@@ -160,33 +170,114 @@ export class App {
   }
 
   private onDown(e: PointerEvent): void {
+    this.canvas.setPointerCapture?.(e.pointerId);
     const screen = this.screenPos(e);
-    this.lastPointer = screen;
-    const world = this.camera.screenToWorld(screen);
-    const isPanButton = e.button !== 0;
+    this.pointers.set(e.pointerId, screen);
 
-    if (this.mode === "editor" && !isPanButton) {
-      const consumed = this.editor.onPointerDown(world);
-      this.onChange();
-      if (consumed) return;
+    if (this.pointers.size === 2) {
+      // Second finger: abandon the single interaction and start a pinch gesture.
+      if (this.press?.dragging) this.editor.onPointerUp();
+      this.press = null;
+      this.beginGesture();
+      return;
     }
-    this.panning = true;
+    if (this.pointers.size > 2) return;
+
+    // Single pointer. A non-primary mouse button always pans (never taps).
+    const canTap = e.button === 0;
+    const world = this.camera.screenToWorld(screen);
+    if (this.mode === "editor") {
+      this.editor.hover(world);
+      const dragging = canTap && this.editor.beginDrag(world);
+      this.press = { startScreen: screen, lastScreen: screen, moved: false, dragging, canTap };
+      if (dragging) this.onChange();
+    } else {
+      this.press = { startScreen: screen, lastScreen: screen, moved: false, dragging: false, canTap };
+    }
   }
 
   private onMove(e: PointerEvent): void {
+    if (!this.pointers.has(e.pointerId)) return;
     const screen = this.screenPos(e);
-    const world = this.camera.screenToWorld(screen);
-    if (this.panning) {
-      this.camera.pan(screen.x - this.lastPointer.x, screen.y - this.lastPointer.y);
-    } else if (this.mode === "editor") {
-      this.editor.onPointerMove(world);
+    this.pointers.set(e.pointerId, screen);
+
+    if (this.gesture && this.pointers.size >= 2) {
+      this.updateGesture();
+      return;
     }
-    this.lastPointer = screen;
+    if (!this.press) return;
+
+    const world = this.camera.screenToWorld(screen);
+    if (this.press.dragging) {
+      this.editor.onPointerMove(world);
+      this.press.lastScreen = screen;
+      return;
+    }
+
+    if (!this.press.moved) {
+      const dx = screen.x - this.press.startScreen.x;
+      const dy = screen.y - this.press.startScreen.y;
+      if (Math.hypot(dx, dy) > this.TAP_THRESHOLD) this.press.moved = true;
+    }
+    if (this.press.moved) {
+      this.camera.pan(screen.x - this.press.lastScreen.x, screen.y - this.press.lastScreen.y);
+    } else if (this.mode === "editor") {
+      this.editor.hover(world); // keep anchors/handles highlighted under the cursor
+    }
+    this.press.lastScreen = screen;
   }
 
-  private onUp(): void {
-    this.panning = false;
-    this.editor.onPointerUp();
+  private onUp(e: PointerEvent): void {
+    this.canvas.releasePointerCapture?.(e.pointerId);
+    const had = this.pointers.delete(e.pointerId);
+    if (!had) return;
+
+    if (this.gesture) {
+      // Leaving a two-finger gesture; re-seat a single press on any remaining
+      // finger so the view doesn't jump, and don't fire a tap.
+      this.gesture = null;
+      const remaining = [...this.pointers.values()][0];
+      if (remaining) {
+        this.press = {
+          startScreen: remaining,
+          lastScreen: remaining,
+          moved: true,
+          dragging: false,
+          canTap: false,
+        };
+      }
+      return;
+    }
+
+    if (this.press) {
+      if (this.press.dragging) {
+        this.editor.onPointerUp();
+      } else if (this.press.canTap && !this.press.moved && this.mode === "editor") {
+        // A tap: apply the active tool at the tapped point.
+        this.editor.tap(this.camera.screenToWorld(this.press.startScreen));
+        this.onChange();
+      }
+      this.press = null;
+    }
+  }
+
+  private beginGesture(): void {
+    const pts = [...this.pointers.values()];
+    this.gesture = {
+      dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+      mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+    };
+  }
+
+  private updateGesture(): void {
+    if (!this.gesture) return;
+    const pts = [...this.pointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+    const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    // Pan by the midpoint movement, then zoom about the new midpoint.
+    this.camera.pan(mid.x - this.gesture.mid.x, mid.y - this.gesture.mid.y);
+    this.camera.zoomAt(mid, dist / this.gesture.dist);
+    this.gesture = { dist, mid };
   }
 
   private onWheel(e: WheelEvent): void {

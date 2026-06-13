@@ -43,8 +43,15 @@ seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
 - **Escenarios**: intersección con STOP, rotonda e incorporación a autovía.
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 
-Navegación: rueda para zoom, arrastrar con botón central/derecho (o botón
-izquierdo sobre vacío) para desplazar.
+**Navegación e interacción.** En el editor el modelo es "tocar = actuar,
+arrastrar = mover la cámara": un toque/clic aplica la herramienta activa en ese
+punto, y arrastrar desplaza la vista (salvo al agarrar un nodo o un tirador con
+la herramienta Editar). La rueda hace zoom en escritorio.
+
+**Móvil / táctil.** Funciona con gestos: un dedo toca (herramienta) o arrastra
+(desplaza), **dos dedos** hacen *pinch* para zoom y desplazamiento simultáneos.
+El panel de control es un *bottom sheet* plegable; el botón flotante (☰ / ✕)
+lo muestra u oculta para dejar sitio al lienzo.
 
 ### Modo Simulación
 - Play/Pausa (`Espacio`), Reiniciar.
