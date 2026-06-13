@@ -40,7 +40,10 @@ Las flechas claras sobre cada carril indican el **sentido de circulación**.
 **Atajos de teclado:** `Tab` / `1` / `2` cambian de modo · `V E C G D`
 seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
 `Esc` cancela · en simulación, `Espacio` play/pausa y `R` reinicia.
-- **Escenarios**: intersección con STOP, rotonda e incorporación a autovía.
+- **Escenarios** (desplegable): intersección con STOP, cruce en T (ceda),
+  STOP de 4 direcciones, rotonda, incorporación a autovía, salida de autovía y
+  carretera con curvas. Los multicarril usan conexiones manuales para imponer
+  disciplina de carril (p. ej. la incorporación entra solo al carril derecho).
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 
 **Navegación e interacción.** En el editor el modelo es "tocar = actuar,
