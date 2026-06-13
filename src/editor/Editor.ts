@@ -1,5 +1,5 @@
 import { RoadNetwork } from "../network/RoadNetwork.ts";
-import { Vec2, dist } from "../core/vec.ts";
+import { Vec2, dist, normalize, sub, scale, add } from "../core/vec.ts";
 import { Camera } from "../render/Camera.ts";
 import { samplePolyline, Cubic } from "../core/bezier.ts";
 import { Segment, SignType, LaneRef } from "../network/types.ts";
@@ -9,7 +9,14 @@ export type EditorTool = "select" | "road" | "sign" | "delete" | "connect";
 type Drag =
   | { kind: "node"; id: string }
   | { kind: "handle"; segId: string; which: "h1" | "h2" }
+  | { kind: "endpoint"; segId: string; which: "start" | "end"; nodeId: string }
   | null;
+
+/** A draggable endpoint grip shown on the selected segment. */
+export interface EndpointGrip {
+  which: "start" | "end";
+  pos: Vec2;
+}
 
 /** A drawable lane endpoint at a node, used to wire manual connectors. */
 export interface LaneAnchor {
@@ -31,6 +38,9 @@ export class Editor {
   linkFrom: { ref: LaneRef; node: string } | null = null;
   linkHoverNode: string | null = null;
 
+  /** Node highlighted as a snap target while dragging a segment endpoint. */
+  snapNode: string | null = null;
+
   private drag: Drag = null;
 
   constructor(private net: RoadNetwork, private camera: Camera) {}
@@ -43,7 +53,7 @@ export class Editor {
     this.cursorWorld = world;
     if (this.tool !== "select") return false;
 
-    // Bézier handle of the selected segment takes priority.
+    // Handles and endpoint grips of the selected segment take priority.
     if (this.selectedSegment) {
       const seg = this.net.segments.get(this.selectedSegment);
       if (seg) {
@@ -53,6 +63,19 @@ export class Editor {
         }
         if (dist(seg.h2, world) < this.pickRadius()) {
           this.drag = { kind: "handle", segId: seg.id, which: "h2" };
+          return true;
+        }
+        for (const grip of this.endpointGrips()) {
+          if (dist(grip.pos, world) >= this.pickRadius()) continue;
+          const currentNode = grip.which === "start" ? seg.startNode : seg.endNode;
+          // Detach from a shared junction onto its own node so it can be moved
+          // independently; a lone endpoint just drags its existing node.
+          const nodeId =
+            this.net.nodeDegree(currentNode) > 1
+              ? this.net.detachEndpoint(seg.id, grip.which)
+              : currentNode;
+          if (!nodeId) continue;
+          this.drag = { kind: "endpoint", segId: seg.id, which: grip.which, nodeId };
           return true;
         }
       }
@@ -99,27 +122,95 @@ export class Editor {
   onPointerMove(world: Vec2): void {
     this.hover(world);
     if (!this.drag) return;
-    if (this.drag.kind === "node") {
-      this.net.moveNode(this.drag.id, world);
-    } else {
-      const seg = this.net.segments.get(this.drag.segId);
-      if (seg) this.net.updateSegment(seg.id, { [this.drag.which]: { ...world } });
+    switch (this.drag.kind) {
+      case "node":
+        this.net.moveNode(this.drag.id, world);
+        break;
+      case "handle": {
+        const seg = this.net.segments.get(this.drag.segId);
+        if (seg) this.net.updateSegment(seg.id, { [this.drag.which]: { ...world } });
+        break;
+      }
+      case "endpoint": {
+        this.net.moveNode(this.drag.nodeId, world);
+        // Highlight a node we'd snap/reconnect to on release.
+        const seg = this.net.segments.get(this.drag.segId);
+        const otherEnd = seg
+          ? this.drag.which === "start"
+            ? seg.endNode
+            : seg.startNode
+          : null;
+        const snap = this.nearestNodeExcept(world, this.snapRadius(), [
+          this.drag.nodeId,
+          otherEnd,
+        ]);
+        this.snapNode = snap?.id ?? null;
+        break;
+      }
     }
   }
 
-  /** True while a node/handle drag is in progress. */
+  /** True while a node/handle/endpoint drag is in progress. */
   get isDragging(): boolean {
     return this.drag != null;
   }
 
   onPointerUp(): void {
+    if (this.drag?.kind === "endpoint" && this.snapNode) {
+      this.net.setSegmentEndpoint(this.drag.segId, this.drag.which, this.snapNode);
+    }
+    this.snapNode = null;
     this.drag = null;
   }
 
   cancel(): void {
     this.pendingNode = null;
     this.linkFrom = null;
+    this.snapNode = null;
     this.drag = null;
+  }
+
+  /** Endpoint grips of the selected segment (drawn so the user can grab them). */
+  endpointGrips(): EndpointGrip[] {
+    if (this.tool !== "select" || !this.selectedSegment) return [];
+    const seg = this.net.segments.get(this.selectedSegment);
+    if (!seg) return [];
+    const start = this.net.nodes.get(seg.startNode);
+    const end = this.net.nodes.get(seg.endNode);
+    if (!start || !end) return [];
+    const span = dist(start.pos, end.pos);
+    const gd = Math.min(7, Math.max(2, span * 0.28));
+    const gripFor = (nodePos: Vec2, handle: Vec2, away: Vec2): Vec2 => {
+      let dir = normalize(sub(handle, nodePos));
+      if (dist(handle, nodePos) < 1e-3) dir = normalize(sub(away, nodePos));
+      return add(nodePos, scale(dir, gd));
+    };
+    return [
+      { which: "start", pos: gripFor(start.pos, seg.h1, end.pos) },
+      { which: "end", pos: gripFor(end.pos, seg.h2, start.pos) },
+    ];
+  }
+
+  private snapRadius(): number {
+    return Math.max(this.pickRadius() * 1.6, 4);
+  }
+
+  private nearestNodeExcept(
+    world: Vec2,
+    range: number,
+    exclude: (string | null)[]
+  ): { id: string; pos: Vec2 } | null {
+    let best: { id: string; pos: Vec2 } | null = null;
+    let bestD = range;
+    for (const n of this.net.nodes.values()) {
+      if (exclude.includes(n.id)) continue;
+      const d = dist(n.pos, world);
+      if (d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    return best;
   }
 
   /** Revert the node currently under the cursor to automatic connectors. */

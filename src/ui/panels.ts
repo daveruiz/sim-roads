@@ -6,7 +6,12 @@ import { EditorTool } from "../editor/Editor.ts";
 
 const TOOLS: { id: EditorTool; label: string; hint: string }[] = [
   { id: "road", label: "Vía (V)", hint: "Clic para crear nodos y conectarlos. Esc cancela la cadena." },
-  { id: "select", label: "Editar (E)", hint: "Arrastra nodos para moverlos y los tiradores naranjas para curvar." },
+  {
+    id: "select",
+    label: "Editar (E)",
+    hint:
+      "Arrastra nodos para moverlos y los tiradores naranjas para curvar. Los anillos en los extremos del tramo seleccionado lo desenganchan del cruce; suéltalos sobre otro nodo para reconectar.",
+  },
   {
     id: "connect",
     label: "Conexión (C)",

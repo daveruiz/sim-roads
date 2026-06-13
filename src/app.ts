@@ -148,6 +148,8 @@ export class App {
       linkHoverNode: connectMode ? this.editor.linkHoverNode : null,
       linkFrom: connectMode ? this.editor.linkFrom?.ref ?? null : null,
       anchors: connectMode ? this.editor.allAnchors() : [],
+      endpointGrips: this.mode === "editor" ? this.editor.endpointGrips() : [],
+      snapNode: this.mode === "editor" ? this.editor.snapNode : null,
     };
   }
 
@@ -252,6 +254,7 @@ export class App {
     if (this.press) {
       if (this.press.dragging) {
         this.editor.onPointerUp();
+        this.onChange();
       } else if (this.press.canTap && !this.press.moved && this.mode === "editor") {
         // A tap: apply the active tool at the tapped point.
         this.editor.tap(this.camera.screenToWorld(this.press.startScreen));

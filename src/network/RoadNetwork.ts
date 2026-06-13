@@ -86,6 +86,53 @@ export class RoadNetwork {
     this.markDirty();
   }
 
+  /** True if a node is used by more than one segment (a real junction). */
+  nodeDegree(nodeId: string): number {
+    let n = 0;
+    for (const seg of this.segments.values()) {
+      if (seg.startNode === nodeId) n++;
+      if (seg.endNode === nodeId) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Reassign one end of a segment to a different node. Signs on that approach
+   * follow the segment; manual links at the old node that referenced this
+   * segment are dropped (the approach changed). An orphaned old node is removed.
+   */
+  setSegmentEndpoint(segId: string, which: "start" | "end", nodeId: string): void {
+    const seg = this.segments.get(segId);
+    if (!seg || !this.nodes.has(nodeId)) return;
+    const old = which === "start" ? seg.startNode : seg.endNode;
+    if (old === nodeId) return;
+    if (which === "start") seg.startNode = nodeId;
+    else seg.endNode = nodeId;
+
+    for (const s of this.signs) if (s.segment === segId && s.node === old) s.node = nodeId;
+    this.links = this.links.filter(
+      (l) => !(l.node === old && (l.from.segment === segId || l.to.segment === segId))
+    );
+    if (this.nodeDegree(old) === 0) this.nodes.delete(old);
+    this.markDirty();
+  }
+
+  /**
+   * Detach one end of a segment from its (shared) node onto a fresh node at the
+   * same position, so it can be dragged away and reconnected. Returns the new
+   * node id.
+   */
+  detachEndpoint(segId: string, which: "start" | "end"): string | null {
+    const seg = this.segments.get(segId);
+    if (!seg) return null;
+    const oldId = which === "start" ? seg.startNode : seg.endNode;
+    const old = this.nodes.get(oldId);
+    if (!old) return null;
+    const fresh = this.addNode({ ...old.pos });
+    this.setSegmentEndpoint(segId, which, fresh.id);
+    return fresh.id;
+  }
+
   deleteSegment(id: string): void {
     this.segments.delete(id);
     this.signs = this.signs.filter((s) => s.segment !== id);

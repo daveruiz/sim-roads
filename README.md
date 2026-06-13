@@ -25,6 +25,9 @@ npm run smoke      # prueba de humo headless del motor de simulación
 - **Editar**: arrastra nodos para moverlos y los tiradores naranjas de un
   segmento seleccionado para **curvar** la vía (Bézier cúbica). Selecciona un
   segmento para editar nº de carriles por sentido, ancho y límite de velocidad.
+  Los **anillos** en sus dos extremos permiten **desenganchar** el tramo de un
+  cruce (se le crea un nodo propio) y, soltándolos sobre otro nodo, **reconectar**
+  sin tener que borrar y volver a dibujar.
 - **Conexión**: define a mano qué carril conecta con qué a través de un cruce.
   Acércate a un nodo y verás los **anclajes** de cada carril: clic en uno de
   ENTRADA (azul) y luego en uno de SALIDA (verde) para crear/quitar ese giro.

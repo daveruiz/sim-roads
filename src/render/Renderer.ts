@@ -4,7 +4,7 @@ import { Simulation } from "../sim/Simulation.ts";
 import { Vec2, perp, add, scale, angleOf, normalize, sub } from "../core/vec.ts";
 import { Cubic, samplePolyline } from "../core/bezier.ts";
 import { Segment, LaneRef, sameLaneRef } from "../network/types.ts";
-import { LaneAnchor } from "../editor/Editor.ts";
+import { LaneAnchor, EndpointGrip } from "../editor/Editor.ts";
 
 export interface RenderOptions {
   mode: "editor" | "sim";
@@ -17,6 +17,8 @@ export interface RenderOptions {
   anchors: LaneAnchor[];
   linkFrom: LaneRef | null;
   linkHoverNode: string | null;
+  endpointGrips: EndpointGrip[];
+  snapNode: string | null;
 }
 
 const COLORS = {
@@ -38,6 +40,7 @@ const COLORS = {
   anchorIn: "#4fa8ff",
   anchorOut: "#7CFC9A",
   anchorSel: "#ffffff",
+  endpoint: "#ff8a5c",
 };
 
 /** Draws the road network and simulation onto a canvas in world coordinates. */
@@ -256,6 +259,30 @@ export class Renderer {
       ctx.arc(node.pos.x, node.pos.y, 1.2, 0, Math.PI * 2);
       ctx.fillStyle = node.id === opts.hoverNode ? COLORS.nodeHover : COLORS.node;
       ctx.fill();
+    }
+
+    // Snap target while dragging an endpoint.
+    if (opts.snapNode) {
+      const n = this.net.nodes.get(opts.snapNode);
+      if (n) {
+        ctx.beginPath();
+        ctx.arc(n.pos.x, n.pos.y, 2.6, 0, Math.PI * 2);
+        ctx.strokeStyle = COLORS.selected;
+        ctx.lineWidth = 0.4;
+        ctx.stroke();
+      }
+    }
+
+    // Endpoint grips of the selected segment (hollow rings, draggable to
+    // detach/reconnect the segment without deleting it).
+    for (const grip of opts.endpointGrips) {
+      ctx.beginPath();
+      ctx.arc(grip.pos.x, grip.pos.y, 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.bg;
+      ctx.fill();
+      ctx.strokeStyle = COLORS.endpoint;
+      ctx.lineWidth = 0.35;
+      ctx.stroke();
     }
   }
 
