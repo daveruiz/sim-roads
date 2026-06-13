@@ -1,13 +1,23 @@
 import { Vec2 } from "../core/vec.ts";
 import { straightControls } from "../core/bezier.ts";
 import { nextId } from "../core/id.ts";
-import { RoadNode, Segment, Sign, SignType, BuiltGraph } from "./types.ts";
+import {
+  RoadNode,
+  Segment,
+  Sign,
+  SignType,
+  BuiltGraph,
+  Link,
+  LaneRef,
+  sameLaneRef,
+} from "./types.ts";
 import { buildGraph } from "./build.ts";
 
 export interface SerializedNetwork {
   nodes: RoadNode[];
   segments: Segment[];
   signs: Sign[];
+  links?: Link[];
 }
 
 /**
@@ -18,11 +28,14 @@ export class RoadNetwork {
   nodes = new Map<string, RoadNode>();
   segments = new Map<string, Segment>();
   signs: Sign[] = [];
+  links: Link[] = [];
 
   private _graph: BuiltGraph | null = null;
 
   get graph(): BuiltGraph {
-    if (!this._graph) this._graph = buildGraph(this.nodes, this.segments, this.signs);
+    if (!this._graph) {
+      this._graph = buildGraph(this.nodes, this.segments, this.signs, this.links);
+    }
     return this._graph;
   }
 
@@ -76,6 +89,9 @@ export class RoadNetwork {
   deleteSegment(id: string): void {
     this.segments.delete(id);
     this.signs = this.signs.filter((s) => s.segment !== id);
+    this.links = this.links.filter(
+      (l) => l.from.segment !== id && l.to.segment !== id
+    );
     this.markDirty();
   }
 
@@ -85,12 +101,41 @@ export class RoadNetwork {
       if (seg.startNode === id || seg.endNode === id) this.deleteSegment(seg.id);
     }
     this.signs = this.signs.filter((s) => s.node !== id);
+    this.links = this.links.filter((l) => l.node !== id);
     this.markDirty();
   }
 
   setSign(segment: string, node: string, type: SignType | null): void {
     this.signs = this.signs.filter((s) => !(s.segment === segment && s.node === node));
     if (type) this.signs.push({ id: nextId("sign"), segment, node, type });
+    this.markDirty();
+  }
+
+  /* ----------------------- explicit links ------------------------ */
+
+  /** Toggle a manual lane-to-lane connection at a node. */
+  toggleLink(node: string, from: LaneRef, to: LaneRef): void {
+    const idx = this.links.findIndex(
+      (l) => l.node === node && sameLaneRef(l.from, from) && sameLaneRef(l.to, to)
+    );
+    if (idx >= 0) this.links.splice(idx, 1);
+    else this.links.push({ id: nextId("link"), node, from, to });
+    this.markDirty();
+  }
+
+  hasLink(node: string, from: LaneRef, to: LaneRef): boolean {
+    return this.links.some(
+      (l) => l.node === node && sameLaneRef(l.from, from) && sameLaneRef(l.to, to)
+    );
+  }
+
+  nodeHasLinks(node: string): boolean {
+    return this.links.some((l) => l.node === node);
+  }
+
+  /** Revert a node to automatic (all-to-all) connector generation. */
+  clearNodeLinks(node: string): void {
+    this.links = this.links.filter((l) => l.node !== node);
     this.markDirty();
   }
 
@@ -101,6 +146,7 @@ export class RoadNetwork {
       nodes: [...this.nodes.values()],
       segments: [...this.segments.values()],
       signs: [...this.signs],
+      links: [...this.links],
     };
   }
 
@@ -109,6 +155,7 @@ export class RoadNetwork {
     for (const n of data.nodes) net.nodes.set(n.id, n);
     for (const s of data.segments) net.segments.set(s.id, s);
     net.signs = data.signs ?? [];
+    net.links = data.links ?? [];
     net.markDirty();
     return net;
   }

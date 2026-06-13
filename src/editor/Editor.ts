@@ -2,14 +2,22 @@ import { RoadNetwork } from "../network/RoadNetwork.ts";
 import { Vec2, dist } from "../core/vec.ts";
 import { Camera } from "../render/Camera.ts";
 import { samplePolyline, Cubic } from "../core/bezier.ts";
-import { Segment, SignType } from "../network/types.ts";
+import { Segment, SignType, LaneRef } from "../network/types.ts";
 
-export type EditorTool = "select" | "road" | "sign" | "delete";
+export type EditorTool = "select" | "road" | "sign" | "delete" | "connect";
 
 type Drag =
   | { kind: "node"; id: string }
   | { kind: "handle"; segId: string; which: "h1" | "h2" }
   | null;
+
+/** A drawable lane endpoint at a node, used to wire manual connectors. */
+export interface LaneAnchor {
+  ref: LaneRef;
+  node: string;
+  pos: Vec2;
+  kind: "in" | "out"; // incoming lane end / outgoing lane start
+}
 
 /** Handles editor pointer interactions: building and shaping the network. */
 export class Editor {
@@ -18,6 +26,10 @@ export class Editor {
   pendingNode: string | null = null;
   hoverNode: string | null = null;
   cursorWorld: Vec2 | null = null;
+
+  /** Connector tool state. */
+  linkFrom: { ref: LaneRef; node: string } | null = null;
+  linkHoverNode: string | null = null;
 
   private drag: Drag = null;
 
@@ -38,12 +50,17 @@ export class Editor {
       case "delete":
         this.deleteAt(world);
         return true;
+      case "connect":
+        return this.placeLink(world);
     }
   }
 
   onPointerMove(world: Vec2): void {
     this.cursorWorld = world;
     this.hoverNode = this.nodeAt(world)?.id ?? null;
+    if (this.tool === "connect") {
+      this.linkHoverNode = this.nearestNode(world, 40)?.id ?? null;
+    }
     if (!this.drag) return;
     if (this.drag.kind === "node") {
       this.net.moveNode(this.drag.id, world);
@@ -59,7 +76,65 @@ export class Editor {
 
   cancel(): void {
     this.pendingNode = null;
+    this.linkFrom = null;
     this.drag = null;
+  }
+
+  /** Revert the node currently under the cursor to automatic connectors. */
+  resetHoveredNodeToAuto(): void {
+    const node = this.linkHoverNode ?? this.hoverNode;
+    if (node) this.net.clearNodeLinks(node);
+  }
+
+  /* ------------------------ connector tool ----------------------- */
+
+  /** Lane endpoints (anchors) at a node, for wiring manual connectors. */
+  anchorsAt(node: string): LaneAnchor[] {
+    const out: LaneAnchor[] = [];
+    for (const lane of this.net.graph.lanes) {
+      const ref: LaneRef = { segment: lane.segment, dir: lane.dir, index: lane.index };
+      if (lane.toNode === node) {
+        out.push({ ref, node, pos: lane.poly.posAt(lane.poly.length), kind: "in" });
+      }
+      if (lane.fromNode === node) {
+        out.push({ ref, node, pos: lane.poly.posAt(0), kind: "out" });
+      }
+    }
+    return out;
+  }
+
+  private nearestAnchor(world: Vec2): LaneAnchor | null {
+    const r = Math.max(this.pickRadius(), 1.6);
+    let best: LaneAnchor | null = null;
+    let bestD = r;
+    const nodes = this.linkHoverNode ? [this.linkHoverNode] : [...this.net.nodes.keys()];
+    for (const n of nodes) {
+      for (const a of this.anchorsAt(n)) {
+        const d = dist(a.pos, world);
+        if (d < bestD) {
+          bestD = d;
+          best = a;
+        }
+      }
+    }
+    return best;
+  }
+
+  private placeLink(world: Vec2): boolean {
+    const a = this.nearestAnchor(world);
+    if (!a) {
+      this.linkFrom = null; // clicked empty space: clear selection (allow pan)
+      return false;
+    }
+    if (a.kind === "in") {
+      this.linkFrom = { ref: a.ref, node: a.node };
+      return true;
+    }
+    // Outgoing anchor: complete the connection if a source is selected here.
+    if (this.linkFrom && this.linkFrom.node === a.node) {
+      this.net.toggleLink(a.node, this.linkFrom.ref, a.ref); // keep source for chaining
+    }
+    return true;
   }
 
   /* --------------------------- tools ----------------------------- */
@@ -129,6 +204,20 @@ export class Editor {
 
   private pickRadius(): number {
     return 8 / this.camera.zoom; // ~8 screen px in world units
+  }
+
+  /** Nearest node within `range` world units, or null. */
+  nearestNode(world: Vec2, range: number): { id: string; pos: Vec2 } | null {
+    let best: { id: string; pos: Vec2 } | null = null;
+    let bestD = range;
+    for (const n of this.net.nodes.values()) {
+      const d = dist(n.pos, world);
+      if (d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    return best;
   }
 
   nodeAt(world: Vec2): { id: string; pos: Vec2 } | null {

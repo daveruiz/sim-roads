@@ -43,6 +43,36 @@ export interface Sign {
   type: SignType;
 }
 
+/**
+ * A stable reference to a derived lane (lanes are rebuilt on every edit, so we
+ * reference them by segment + direction + index rather than by runtime id).
+ */
+export interface LaneRef {
+  segment: string;
+  dir: "forward" | "backward";
+  index: number;
+}
+
+/**
+ * An explicit lane-to-lane connection through a node. If a node has any links,
+ * ONLY those connectors are built for it (manual mode); otherwise every
+ * compatible turn is generated automatically.
+ */
+export interface Link {
+  id: string;
+  node: string;
+  from: LaneRef;
+  to: LaneRef;
+}
+
+export function laneKey(ref: LaneRef): string {
+  return `${ref.segment}|${ref.dir}|${ref.index}`;
+}
+
+export function sameLaneRef(a: LaneRef, b: LaneRef): boolean {
+  return a.segment === b.segment && a.dir === b.dir && a.index === b.index;
+}
+
 /* ------------------------------------------------------------------ *
  * DERIVED RUNTIME GRAPH
  * ------------------------------------------------------------------ */

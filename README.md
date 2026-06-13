@@ -25,9 +25,21 @@ npm run smoke      # prueba de humo headless del motor de simulación
 - **Editar**: arrastra nodos para moverlos y los tiradores naranjas de un
   segmento seleccionado para **curvar** la vía (Bézier cúbica). Selecciona un
   segmento para editar nº de carriles por sentido, ancho y límite de velocidad.
+- **Conexión**: define a mano qué carril conecta con qué a través de un cruce.
+  Acércate a un nodo y verás los **anclajes** de cada carril: clic en uno de
+  ENTRADA (azul) y luego en uno de SALIDA (verde) para crear/quitar ese giro.
+  Mientras un nodo no tenga conexiones manuales, se generan automáticamente
+  todos los giros posibles; al añadir la primera pasa a modo manual. Tecla `A`
+  para devolver el nodo a automático.
 - **Señal**: clic cerca del extremo de una vía para alternar
   `ninguna → ceda el paso → STOP` en esa aproximación.
 - **Borrar**: elimina nodos (y sus vías) o vías sueltas.
+
+Las flechas claras sobre cada carril indican el **sentido de circulación**.
+
+**Atajos de teclado:** `Tab` / `1` / `2` cambian de modo · `V E C G D`
+seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
+`Esc` cancela · en simulación, `Espacio` play/pausa y `R` reinicia.
 - **Escenarios**: intersección con STOP, rotonda e incorporación a autovía.
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 

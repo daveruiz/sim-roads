@@ -1,9 +1,10 @@
 import { Camera } from "./Camera.ts";
 import { RoadNetwork } from "../network/RoadNetwork.ts";
 import { Simulation } from "../sim/Simulation.ts";
-import { Vec2, perp, add, scale, angleOf } from "../core/vec.ts";
+import { Vec2, perp, add, scale, angleOf, normalize, sub } from "../core/vec.ts";
 import { Cubic, samplePolyline } from "../core/bezier.ts";
-import { Segment } from "../network/types.ts";
+import { Segment, LaneRef, sameLaneRef } from "../network/types.ts";
+import { LaneAnchor } from "../editor/Editor.ts";
 
 export interface RenderOptions {
   mode: "editor" | "sim";
@@ -12,6 +13,10 @@ export interface RenderOptions {
   hoverNode: string | null;
   pendingStart: Vec2 | null; // when drawing a new segment
   cursorWorld: Vec2 | null;
+  connectMode: boolean;
+  anchors: LaneAnchor[];
+  linkFrom: LaneRef | null;
+  linkHoverNode: string | null;
 }
 
 const COLORS = {
@@ -28,6 +33,11 @@ const COLORS = {
   selected: "#ffd24f",
   stop: "#ff4d4d",
   yield: "#ffb000",
+  laneArrow: "rgba(220,225,235,0.55)",
+  connector: "#5cf2c8",
+  anchorIn: "#4fa8ff",
+  anchorOut: "#7CFC9A",
+  anchorSel: "#ffffff",
 };
 
 /** Draws the road network and simulation onto a canvas in world coordinates. */
@@ -64,8 +74,10 @@ export class Renderer {
     this.drawGrid(w, h);
     this.drawJunctions();
     this.drawSegments(opts);
+    if (opts.mode === "editor") this.drawLaneArrows();
     this.drawSigns();
 
+    if (opts.connectMode) this.drawConnectMode(opts);
     if (opts.mode === "editor") this.drawEditorOverlay(opts);
     if (opts.showConflicts) this.drawConflicts();
     if (opts.mode === "sim") this.drawVehicles();
@@ -244,6 +256,85 @@ export class Renderer {
       ctx.arc(node.pos.x, node.pos.y, 1.2, 0, Math.PI * 2);
       ctx.fillStyle = node.id === opts.hoverNode ? COLORS.nodeHover : COLORS.node;
       ctx.fill();
+    }
+  }
+
+  /** Small chevrons along each lane showing the direction of travel. */
+  private drawLaneArrows(): void {
+    const ctx = this.ctx;
+    ctx.strokeStyle = COLORS.laneArrow;
+    ctx.lineWidth = 0.18;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    const spacing = 11; // metres between chevrons
+    for (const lane of this.net.graph.lanes) {
+      const len = lane.poly.length;
+      if (len < 4) continue;
+      const size = 0.9;
+      for (let s = spacing * 0.6; s < len; s += spacing) {
+        const p = lane.poly.posAt(s);
+        const d = lane.poly.dirAt(s);
+        const back = scale(d, -size);
+        const left = scale(perp(d), size * 0.7);
+        const tip = add(p, scale(d, size * 0.4));
+        const a = add(add(tip, back), left);
+        const b = add(add(tip, back), scale(left, -1));
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(tip.x, tip.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** Connector tool: show the hovered node's connectors and lane anchors. */
+  private drawConnectMode(opts: RenderOptions): void {
+    const ctx = this.ctx;
+
+    // Existing connectors at the hovered node.
+    if (opts.linkHoverNode) {
+      for (const conn of this.net.graph.connectors) {
+        if (conn.node !== opts.linkHoverNode) continue;
+        const pts = conn.poly.points;
+        this.stroke(pts, 0.4, COLORS.connector);
+        // Arrowhead at the end to show direction.
+        const end = pts[pts.length - 1];
+        const d = normalize(sub(end, pts[pts.length - 2]));
+        const back = scale(d, -1.2);
+        const left = scale(perp(d), 0.7);
+        ctx.beginPath();
+        ctx.moveTo(end.x + back.x + left.x, end.y + back.y + left.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.lineTo(end.x + back.x - left.x, end.y + back.y - left.y);
+        ctx.strokeStyle = COLORS.connector;
+        ctx.lineWidth = 0.4;
+        ctx.stroke();
+      }
+    }
+
+    // Lane anchors: incoming (blue) and outgoing (green); selected one white.
+    for (const a of opts.anchors) {
+      const selected = a.kind === "in" && opts.linkFrom && sameLaneRef(a.ref, opts.linkFrom);
+      ctx.beginPath();
+      ctx.arc(a.pos.x, a.pos.y, selected ? 1.4 : 1.0, 0, Math.PI * 2);
+      ctx.fillStyle = selected
+        ? COLORS.anchorSel
+        : a.kind === "in"
+          ? COLORS.anchorIn
+          : COLORS.anchorOut;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 0.12;
+      ctx.stroke();
+    }
+
+    // Rubber-band from the selected incoming anchor to the cursor.
+    if (opts.linkFrom && opts.cursorWorld) {
+      const from = opts.anchors.find(
+        (a) => a.kind === "in" && sameLaneRef(a.ref, opts.linkFrom!)
+      );
+      if (from) this.stroke([from.pos, opts.cursorWorld], 0.2, COLORS.anchorSel, [1, 1]);
     }
   }
 

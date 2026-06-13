@@ -5,11 +5,19 @@ import { RULES } from "../sim/rules/index.ts";
 import { EditorTool } from "../editor/Editor.ts";
 
 const TOOLS: { id: EditorTool; label: string; hint: string }[] = [
-  { id: "road", label: "Vía", hint: "Clic para crear nodos y conectarlos. Esc cancela la cadena." },
-  { id: "select", label: "Editar", hint: "Arrastra nodos para moverlos y los tiradores naranjas para curvar." },
-  { id: "sign", label: "Señal", hint: "Clic cerca del extremo de una vía: ninguna → ceda → STOP." },
-  { id: "delete", label: "Borrar", hint: "Clic en un nodo o vía para eliminarlo." },
+  { id: "road", label: "Vía (V)", hint: "Clic para crear nodos y conectarlos. Esc cancela la cadena." },
+  { id: "select", label: "Editar (E)", hint: "Arrastra nodos para moverlos y los tiradores naranjas para curvar." },
+  {
+    id: "connect",
+    label: "Conexión (C)",
+    hint:
+      "En un cruce: clic en un anclaje de ENTRADA (azul) y luego en uno de SALIDA (verde) para crear/quitar ese giro. Tecla A = volver a automático.",
+  },
+  { id: "sign", label: "Señal (G)", hint: "Clic cerca del extremo de una vía: ninguna → ceda → STOP." },
+  { id: "delete", label: "Borrar (D)", hint: "Clic en un nodo o vía para eliminarlo." },
 ];
+
+const SHORTCUTS = "Atajos: Tab/1/2 modo · V E C G D herramientas · A auto · Espacio play · R reinicia";
 
 /** Build and wire the entire control panel. */
 export function buildUI(app: App, root: HTMLElement): void {
@@ -125,6 +133,13 @@ export function buildUI(app: App, root: HTMLElement): void {
 
   const stats = el("div", "stats");
   simPanel.appendChild(stats);
+
+  // ---- shortcuts footer (always visible) ----
+  const footer = el("div", "section");
+  const shortcuts = el("div", "hint");
+  shortcuts.textContent = SHORTCUTS;
+  footer.appendChild(shortcuts);
+  h.appendChild(footer);
 
   // ---- dynamic sync ----
   function sync(): void {

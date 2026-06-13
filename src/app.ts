@@ -1,6 +1,6 @@
 import { RoadNetwork, SerializedNetwork } from "./network/RoadNetwork.ts";
 import { Simulation } from "./sim/Simulation.ts";
-import { Editor } from "./editor/Editor.ts";
+import { Editor, EditorTool } from "./editor/Editor.ts";
 import { Camera } from "./render/Camera.ts";
 import { Renderer, RenderOptions } from "./render/Renderer.ts";
 import { Vec2 } from "./core/vec.ts";
@@ -121,6 +121,7 @@ export class App {
   }
 
   private renderOptions(): RenderOptions {
+    const connectMode = this.mode === "editor" && this.editor.tool === "connect";
     return {
       mode: this.mode,
       selectedSegment: this.editor.selectedSegment,
@@ -131,6 +132,13 @@ export class App {
           ? this.net.nodes.get(this.editor.pendingNode)?.pos ?? null
           : null,
       cursorWorld: this.editor.cursorWorld,
+      connectMode,
+      linkHoverNode: connectMode ? this.editor.linkHoverNode : null,
+      linkFrom: connectMode ? this.editor.linkFrom?.ref ?? null : null,
+      anchors:
+        connectMode && this.editor.linkHoverNode
+          ? this.editor.anchorsAt(this.editor.linkHoverNode)
+          : [],
     };
   }
 
@@ -189,9 +197,62 @@ export class App {
   }
 
   private onKey(e: KeyboardEvent): void {
-    if (e.key === "Escape") this.editor.cancel();
-    if (e.key === " " && this.mode === "sim") {
-      this.running = !this.running;
+    // Ignore when typing into a form control.
+    const target = e.target as HTMLElement | null;
+    if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    const key = e.key.toLowerCase();
+
+    if (key === "escape") {
+      this.editor.cancel();
+      this.onChange();
+      return;
+    }
+
+    // Mode switching.
+    if (key === "tab") {
+      e.preventDefault();
+      this.setMode(this.mode === "editor" ? "sim" : "editor");
+      return;
+    }
+    if (key === "1") return this.setMode("editor");
+    if (key === "2") return this.setMode("sim");
+
+    if (this.mode === "sim") {
+      if (key === " ") {
+        e.preventDefault();
+        this.running = !this.running;
+        this.onChange();
+      }
+      if (key === "r") {
+        this.sim.reset();
+        this.onChange();
+      }
+      return;
+    }
+
+    // Editor tool shortcuts.
+    const tools: Record<string, EditorTool> = {
+      v: "road",
+      e: "select",
+      c: "connect",
+      g: "sign",
+      d: "delete",
+    };
+    if (key === "delete" || key === "backspace" || key === "x") {
+      this.editor.tool = "delete";
+      this.onChange();
+      return;
+    }
+    if (key === "a" && this.editor.tool === "connect") {
+      this.editor.resetHoveredNodeToAuto();
+      this.onChange();
+      return;
+    }
+    if (tools[key]) {
+      this.editor.tool = tools[key];
+      this.editor.cancel();
       this.onChange();
     }
   }

@@ -10,6 +10,8 @@ import {
   Connector,
   BuiltGraph,
   Control,
+  Link,
+  laneKey,
 } from "./types.ts";
 
 const LANE_SAMPLE_OFFSET = 0.5; // lane center sits half a lane from its edge
@@ -18,11 +20,13 @@ const LANE_SAMPLE_OFFSET = 0.5; // lane center sits half a lane from its edge
 export function buildGraph(
   nodes: Map<string, RoadNode>,
   segments: Map<string, Segment>,
-  signs: Sign[]
+  signs: Sign[],
+  links: Link[] = []
 ): BuiltGraph {
   const lanes: Lane[] = [];
   const lanesByEndNode = new Map<string, Lane[]>(); // node -> lanes ending here
   const lanesByStartNode = new Map<string, Lane[]>(); // node -> lanes starting here
+  const laneByRef = new Map<string, Lane>(); // "seg|dir|index" -> lane
 
   for (const seg of segments.values()) {
     const start = nodes.get(seg.startNode);
@@ -42,6 +46,7 @@ export function buildGraph(
       lanes.push(lane);
       indexLane(lanesByEndNode, lane.toNode, lane);
       indexLane(lanesByStartNode, lane.fromNode, lane);
+      laneByRef.set(laneKey({ segment: seg.id, dir: "forward", index: i }), lane);
     }
 
     // Backward lanes sit on the left half and run end->start (points reversed).
@@ -53,6 +58,7 @@ export function buildGraph(
       lanes.push(lane);
       indexLane(lanesByEndNode, lane.toNode, lane);
       indexLane(lanesByStartNode, lane.fromNode, lane);
+      laneByRef.set(laneKey({ segment: seg.id, dir: "backward", index: j }), lane);
     }
   }
 
@@ -60,19 +66,43 @@ export function buildGraph(
   const controlOf = new Map<string, Control>();
   for (const s of signs) controlOf.set(`${s.node}|${s.segment}`, s.type);
 
+  // Explicit links grouped by node (a node with links is in manual mode).
+  const linksByNode = new Map<string, Link[]>();
+  for (const link of links) {
+    const arr = linksByNode.get(link.node);
+    if (arr) arr.push(link);
+    else linksByNode.set(link.node, [link]);
+  }
+
   const connectors: Connector[] = [];
+  const addConnector = (node: string, inLane: Lane, outLane: Lane): void => {
+    const control = controlOf.get(`${node}|${inLane.segment}`) ?? "free";
+    const conn = makeConnector(node, inLane, outLane, control);
+    if (!conn) return;
+    inLane.outgoing.push(conn);
+    connectors.push(conn);
+  };
+
   for (const node of nodes.values()) {
+    const manual = linksByNode.get(node.id);
+    if (manual && manual.length) {
+      // Manual mode: only the links the user defined.
+      for (const link of manual) {
+        const inLane = laneByRef.get(laneKey(link.from));
+        const outLane = laneByRef.get(laneKey(link.to));
+        if (!inLane || !outLane) continue; // stale link (lanes changed)
+        if (inLane.toNode !== node.id || outLane.fromNode !== node.id) continue;
+        addConnector(node.id, inLane, outLane);
+      }
+      continue;
+    }
+    // Automatic mode: every compatible turn.
     const incoming = lanesByEndNode.get(node.id) ?? [];
     const outgoing = lanesByStartNode.get(node.id) ?? [];
     for (const inLane of incoming) {
-      const control = controlOf.get(`${node.id}|${inLane.segment}`) ?? "free";
       for (const outLane of outgoing) {
-        // No U-turn back onto the same segment.
-        if (outLane.segment === inLane.segment) continue;
-        const conn = makeConnector(node.id, inLane, outLane, control);
-        if (!conn) continue;
-        inLane.outgoing.push(conn);
-        connectors.push(conn);
+        if (outLane.segment === inLane.segment) continue; // no U-turn on same road
+        addConnector(node.id, inLane, outLane);
       }
     }
   }
