@@ -28,28 +28,28 @@ function intersection(): RoadNetwork {
 /** Single-lane roundabout with four entries/exits; entries yield to the ring. */
 function roundabout(): RoadNetwork {
   const net = new RoadNetwork();
-  const R = 26;
+  const R = 40;
   const ringNodes: string[] = [];
   const count = 8;
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2;
     ringNodes.push(net.addNode({ x: Math.cos(a) * R, y: Math.sin(a) * R }).id);
   }
-  // One-way ring (counter-clockwise for right-hand traffic): connect i -> i-1.
-  const ringSegs: string[] = [];
+  // One-way ring: each segment goes from node i to node i-1 (one step along the
+  // short arc). Bézier handles bulge outward so the ring reads as a circle.
+  const step = (Math.PI * 2) / count;
+  const bulge = R / Math.cos(Math.PI / count);
   for (let i = 0; i < count; i++) {
     const from = ringNodes[i];
     const to = ringNodes[(i + count - 1) % count];
     const seg = net.addSegment(from, to, { lanesForward: 1, lanesBackward: 0 });
-    // Curve the ring outward so it reads as a circle.
-    const a0 = (i / count) * Math.PI * 2;
-    const a1 = ((i - 1 + count) % count) / count * Math.PI * 2;
-    const bulge = R / Math.cos(Math.PI / count);
+    const a0 = (i / count) * Math.PI * 2; // angle of node i
+    const h1a = a0 - step * 0.33; // along the short arc toward node i-1
+    const h2a = a0 - step * 0.66;
     net.updateSegment(seg.id, {
-      h1: { x: Math.cos(lerpAngle(a0, a1, 0.33)) * bulge, y: Math.sin(lerpAngle(a0, a1, 0.33)) * bulge },
-      h2: { x: Math.cos(lerpAngle(a0, a1, 0.66)) * bulge, y: Math.sin(lerpAngle(a0, a1, 0.66)) * bulge },
+      h1: { x: Math.cos(h1a) * bulge, y: Math.sin(h1a) * bulge },
+      h2: { x: Math.cos(h2a) * bulge, y: Math.sin(h2a) * bulge },
     });
-    ringSegs.push(seg.id);
   }
   // Four entry/exit roads on alternating ring nodes.
   for (let k = 0; k < 4; k++) {
@@ -87,10 +87,6 @@ function highwayMerge(): RoadNetwork {
   });
   net.setSign(ramp.id, b.id, "yield");
   return net;
-}
-
-function lerpAngle(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
 }
 
 export const PRESETS: Preset[] = [

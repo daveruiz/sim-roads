@@ -5,7 +5,7 @@ for (const preset of PRESETS) {
   const net = preset.build();
   const g = net.graph;
   const sim = new Simulation(net);
-  sim.config.spawnRate = 3;
+  sim.config.spawnRate = 1.2;
 
   let maxVehicles = 0;
   let maxSpeed = 0;

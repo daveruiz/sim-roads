@@ -70,6 +70,19 @@ límite) y **señales**. De ahí se *compila* un grafo de ejecución:
 
 Cualquier edición marca el grafo como sucio y se recompila de forma perezosa.
 
+### Enrutado (estilo GPS)
+Cuando un vehículo aparece, se le asigna un **destino** (una salida alcanzable) y
+se le calcula la **ruta más rápida** con Dijkstra sobre el grafo de carriles
+(las aristas son los conectores, ponderadas por tiempo estimado = longitud /
+velocidad). El vehículo sigue esa ruta fija hasta salir, en lugar de decidir los
+giros al azar (`src/sim/Router.ts`). En cruces y rotondas esto produce
+trayectorias coherentes y evita que los coches den vueltas sin sentido.
+
+Las incorporaciones (entradas de rotonda, *on-ramps*) aplican **metering de
+entrada**: un vehículo que cede no entra a la unión salvo que haya hueco temporal
+en la vía prioritaria **y** espacio físico justo después de la fusión
+("don't block the box"), lo que evita el bloqueo en bucle cerrado.
+
 ### Sistema de reglas (extensible)
 El comportamiento vive en **un único array de reglas** (`src/sim/rules/index.ts`).
 Cada regla recibe un `RuleContext` (líder delante, señal próxima, si el cruce
@@ -89,13 +102,15 @@ ejemplo, semáforos, límites por tramo, distancia de cortesía, agresividad del
 conductor, cambios de carril, etc. No hay que tocar el bucle de simulación.
 
 ## Limitaciones conocidas / próximos pasos
-- **Enrutado**: hoy es un *random-walk* ponderado por ángulo de giro (sin
-  destino fijo), por lo que en la rotonda algunos coches tienden a dar vueltas.
-  Siguiente paso natural: rutas origen→destino (Dijkstra sobre el grafo de
-  carriles) y matrices de demanda por entrada/salida.
+- **Demanda**: el destino se elige al azar entre las salidas alcanzables.
+  Siguiente paso: matrices origen→destino configurables por entrada/salida.
 - **Cambios de carril**: aún no hay maniobras de cambio de carril ni
   *gap acceptance* lateral; las incorporaciones se resuelven por car-following
-  sobre el carril común. Es la siguiente regla a incorporar.
+  sobre el carril común y metering de entrada. Es la siguiente regla a
+  incorporar (y lo que permitiría rotondas y autovías de varios carriles).
+- **Saturación**: una rotonda de un solo carril muy saturada puede acabar
+  bloqueándose (fenómeno real en rotondas pequeñas, agravado aquí por no tener
+  cambios de carril). A densidades moderadas fluye con normalidad.
 - **Semáforos** y **carriles de giro dedicados**: pendientes (encajan como una
   regla y un tipo de control de nodo más).
 - Prioridad en cruces con control mutuo (p. ej. STOP de 4 direcciones) usa una

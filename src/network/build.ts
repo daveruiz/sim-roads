@@ -8,7 +8,6 @@ import {
   Sign,
   Lane,
   Connector,
-  Conflict,
   BuiltGraph,
   Control,
 } from "./types.ts";
@@ -187,18 +186,32 @@ function computeConflicts(
       for (let k = i + 1; k < list.length; k++) {
         const a = list[i];
         const b = list[k];
-        // Merging from the same incoming lane or into the same outgoing lane is
-        // handled by car-following, not by conflict resolution.
-        if (a.from === b.from || a.to === b.to) continue;
+        // Diverging from the same lane is resolved by car-following only.
+        if (a.from === b.from) continue;
+        if (a.to === b.to) {
+          // Merging into the same lane: the conflict is the merge point itself
+          // (the start of the shared destination lane). This lets a yielding
+          // approach give way to circulating/through traffic — essential for
+          // roundabouts and on-ramps.
+          addConflict(a, b, a.poly.length, b.poly.length, a.to.poly.posAt(0));
+          continue;
+        }
         const hit = polylineCross(a.poly, b.poly);
-        if (!hit) continue;
-        const ca: Conflict = { other: b, sSelf: hit.sA, sOther: hit.sB, point: hit.point };
-        const cb: Conflict = { other: a, sSelf: hit.sB, sOther: hit.sA, point: hit.point };
-        a.conflicts.push(ca);
-        b.conflicts.push(cb);
+        if (hit) addConflict(a, b, hit.sA, hit.sB, hit.point);
       }
     }
   }
+}
+
+function addConflict(
+  a: Connector,
+  b: Connector,
+  sA: number,
+  sB: number,
+  point: Vec2
+): void {
+  a.conflicts.push({ other: b, sSelf: sA, sOther: sB, point });
+  b.conflicts.push({ other: a, sSelf: sB, sOther: sA, point });
 }
 
 /** Find the first crossing point between two polylines and its arc lengths. */

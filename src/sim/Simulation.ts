@@ -2,12 +2,14 @@ import { RoadNetwork } from "../network/RoadNetwork.ts";
 import { Connector, Lane } from "../network/types.ts";
 import { Vehicle } from "./Vehicle.ts";
 import { pickVehicleType, VEHICLE_TYPES } from "./vehicleTypes.ts";
+import { planRoute } from "./Router.ts";
 import { decideAcceleration } from "./rules/index.ts";
 import { RuleContext, ControlAhead, LeaderInfo } from "./rules/types.ts";
 import { PathEl, isLane } from "./path.ts";
 
 const LEADER_LOOKAHEAD = 140; // m
 const CONTROL_LOOKAHEAD = 70; // m
+const EXIT_CLEARANCE = 6; // m of room required on the destination lane to enter
 
 export interface SimConfig {
   /** Target vehicles spawned per second across all sources. */
@@ -81,15 +83,18 @@ export class Simulation {
   }
 
   private trySpawnOne(sources: Lane[]): void {
-    // Try a few random sources until one has room at its entrance.
-    for (let attempt = 0; attempt < 4; attempt++) {
+    const sinks = this.net.graph.sinks;
+    // Try a few random sources until one has room and a reachable destination.
+    for (let attempt = 0; attempt < 6; attempt++) {
       const lane = sources[(Math.random() * sources.length) | 0];
       const type = pickVehicleType(this.config.enabledTypes, Math.random);
       const clearance = type.length + 6;
       const onLane = this.occ.get(lane.id);
       const blocked = onLane?.some((v) => v.s < clearance);
       if (blocked) continue;
-      const v = new Vehicle(type, lane);
+      const route = planRoute(lane, sinks);
+      if (!route) continue; // no exit reachable from this source
+      const v = new Vehicle(type, route);
       v.speed = Math.min(this.desiredSpeed(v), 8);
       this.vehicles.push(v);
       this.stats.spawned += 1;
@@ -220,6 +225,21 @@ export class Simulation {
         }
       }
     }
+
+    // Entry metering ("don't block the box"): never enter a junction unless
+    // there is physical room on the destination lane just past the merge.
+    // Without this, a stopped queue downstream registers an "infinite" time
+    // gap and vehicles pack the junction into a closed-loop deadlock.
+    const dest = this.occ.get(conn.to.id);
+    if (dest) {
+      for (const o of dest) {
+        if (o.s - o.type.length < EXIT_CLEARANCE) {
+          blocked = true;
+          break;
+        }
+      }
+    }
+
     return { minTimeGap, blocked };
   }
 
