@@ -29,3 +29,26 @@ export const carFollowingRule: BehaviorRule = {
     );
   },
 };
+
+/**
+ * Last-resort collision avoidance: brake for any vehicle physically ahead in a
+ * narrow forward cone, whatever lane it is on. This catches contact that the
+ * structured car-following and junction rules don't (e.g. merging/crossing
+ * paths converging geometrically).
+ */
+export const proximityRule: BehaviorRule = {
+  id: "proximity",
+  label: "Anticolisión de proximidad",
+  description: "Frena ante cualquier vehículo físicamente delante, en cualquier carril.",
+  enabled: true,
+  evaluate(ctx) {
+    if (!ctx.proximity) return null;
+    return followAccel(
+      ctx.vehicle.speed,
+      ctx.desiredSpeed,
+      ctx.proximity.gap,
+      ctx.proximity.speed,
+      ctx.vehicle.type
+    );
+  },
+};

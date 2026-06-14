@@ -1,6 +1,6 @@
 import { BehaviorRule, RuleContext } from "./types.ts";
-import { cruiseRule, carFollowingRule } from "./basic.ts";
-import { giveWayRule } from "./giveWay.ts";
+import { cruiseRule, carFollowingRule, proximityRule } from "./basic.ts";
+import { junctionRule } from "./junction.ts";
 import { curveSpeedRule } from "./curve.ts";
 
 export type { BehaviorRule, RuleContext } from "./types.ts";
@@ -14,7 +14,8 @@ export type { BehaviorRule, RuleContext } from "./types.ts";
 export const RULES: BehaviorRule[] = [
   cruiseRule,
   carFollowingRule,
-  giveWayRule,
+  proximityRule,
+  junctionRule,
   curveSpeedRule,
 ];
 
@@ -26,6 +27,8 @@ export function decideAcceleration(ctx: RuleContext): number {
     const a = rule.evaluate(ctx);
     if (a !== null && a < accel) accel = a;
   }
-  // Clamp to comfort envelope.
-  return Math.max(-ctx.vehicle.type.maxDecel, Math.min(ctx.vehicle.type.maxAccel, accel));
+  // Allow braking harder than comfort in emergencies (to avoid contact), but
+  // never accelerate beyond comfort.
+  const emergencyDecel = ctx.vehicle.type.maxDecel * 2;
+  return Math.max(-emergencyDecel, Math.min(ctx.vehicle.type.maxAccel, accel));
 }

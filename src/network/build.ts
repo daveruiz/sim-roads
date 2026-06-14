@@ -28,6 +28,21 @@ export function buildGraph(
   const lanesByStartNode = new Map<string, Lane[]>(); // node -> lanes starting here
   const laneByRef = new Map<string, Lane>(); // "seg|dir|index" -> lane
 
+  // Per-node degree and junction radius, so lanes can be pulled back from real
+  // junctions: the connectors then span the junction interior and vehicles
+  // stop/cross within an area instead of all piling onto the node centre.
+  const degree = new Map<string, number>();
+  const jRadius = new Map<string, number>();
+  for (const seg of segments.values()) {
+    const hw = (seg.lanesForward + seg.lanesBackward) * seg.laneWidth * 0.5;
+    for (const nid of [seg.startNode, seg.endNode]) {
+      degree.set(nid, (degree.get(nid) ?? 0) + 1);
+      jRadius.set(nid, Math.max(jRadius.get(nid) ?? 0, hw));
+    }
+  }
+  const setbackOf = (nid: string): number =>
+    (degree.get(nid) ?? 0) >= 3 ? (jRadius.get(nid) ?? 0) + 1 : 0;
+
   for (const seg of segments.values()) {
     const start = nodes.get(seg.startNode);
     const end = nodes.get(seg.endNode);
@@ -36,12 +51,14 @@ export function buildGraph(
     const cubic: Cubic = { p0: start.pos, p1: seg.h1, p2: seg.h2, p3: end.pos };
     const { points, tangents } = samplePolyline(cubic);
     const w = seg.laneWidth;
+    const sbStart = setbackOf(seg.startNode);
+    const sbEnd = setbackOf(seg.endNode);
 
     // perp(t) points to the driver's right (screen coords, y down). Forward
     // traffic keeps to the right of the centerline (drive-on-right).
     for (let i = 0; i < seg.lanesForward; i++) {
       const offset = (i + LANE_SAMPLE_OFFSET) * w;
-      const pts = points.map((p, k) => add(p, scale(perp(tangents[k]), offset)));
+      const pts = trimPoints(points.map((p, k) => add(p, scale(perp(tangents[k]), offset))), sbStart, sbEnd);
       const lane = makeLane(seg, seg.startNode, seg.endNode, i, "forward", pts);
       lanes.push(lane);
       indexLane(lanesByEndNode, lane.toNode, lane);
@@ -54,7 +71,8 @@ export function buildGraph(
       const offset = (j + LANE_SAMPLE_OFFSET) * w;
       const pts = points.map((p, k) => add(p, scale(perp(tangents[k]), -offset)));
       pts.reverse();
-      const lane = makeLane(seg, seg.endNode, seg.startNode, j, "backward", pts);
+      // After reversing, travel order is end->start, so trim end-node first.
+      const lane = makeLane(seg, seg.endNode, seg.startNode, j, "backward", trimPoints(pts, sbEnd, sbStart));
       lanes.push(lane);
       indexLane(lanesByEndNode, lane.toNode, lane);
       indexLane(lanesByStartNode, lane.fromNode, lane);
@@ -117,6 +135,29 @@ export function buildGraph(
   );
 
   return { lanes, connectors, sources, sinks };
+}
+
+/**
+ * Trim arc length `fromStart`/`fromEnd` off the ends of a polyline, keeping the
+ * interior shape. Used to pull lanes back from junction nodes.
+ */
+function trimPoints(pts: Vec2[], fromStart: number, fromEnd: number): Vec2[] {
+  if (fromStart <= 0 && fromEnd <= 0) return pts;
+  const poly = new Polyline(pts);
+  const total = poly.length;
+  let s0 = Math.min(fromStart, total * 0.45);
+  let s1 = total - Math.min(fromEnd, total * 0.45);
+  if (s1 <= s0 + 0.05) {
+    const m = total / 2;
+    s0 = Math.max(0, m - 0.5);
+    s1 = m + 0.5;
+  }
+  const out: Vec2[] = [poly.posAt(s0)];
+  for (let i = 0; i < pts.length; i++) {
+    if (poly.cum[i] > s0 + 1e-3 && poly.cum[i] < s1 - 1e-3) out.push(pts[i]);
+  }
+  out.push(poly.posAt(s1));
+  return out;
 }
 
 function makeLane(

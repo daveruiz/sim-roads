@@ -38,7 +38,7 @@ export const VEHICLE_TYPES: VehicleType[] = [
   {
     id: "truck",
     label: "Camión",
-    length: 12,
+    length: 8.5,
     width: 2.5,
     maxSpeed: 25,
     maxAccel: 1.0,
@@ -49,7 +49,7 @@ export const VEHICLE_TYPES: VehicleType[] = [
   {
     id: "bus",
     label: "Autobús",
-    length: 12,
+    length: 9,
     width: 2.55,
     maxSpeed: 27,
     maxAccel: 1.2,

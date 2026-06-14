@@ -1,16 +1,9 @@
 import { Vehicle } from "../Vehicle.ts";
-import { Connector } from "../../network/types.ts";
 
 /** Information about the vehicle directly ahead along the planned route. */
 export interface LeaderInfo {
   gap: number; // bumper-to-bumper distance (m)
   speed: number; // leader speed (m/s)
-}
-
-/** The next give-way controlled connector on the route and the distance to it. */
-export interface ControlAhead {
-  connector: Connector;
-  distance: number; // distance from vehicle front to the stop line (m)
 }
 
 /**
@@ -25,14 +18,16 @@ export interface RuleContext {
   desiredSpeed: number;
   /** Nearest leader ahead, or null on open road. */
   leader: LeaderInfo | null;
-  /** Next give-way connector ahead, or null. */
-  control: ControlAhead | null;
   /**
-   * For a give-way connector, whether it is safe to proceed: returns the
-   * smallest time-gap (s) of any conflicting priority vehicle reaching a shared
-   * crossing point, and whether a crossing point is currently blocked.
+   * Nearest vehicle physically ahead within a narrow forward cone, regardless
+   * of lane/route — a last-resort collision-avoidance obstacle.
    */
-  isCrossingClear(c: Connector): { minTimeGap: number; blocked: boolean };
+  proximity: LeaderInfo | null;
+  /**
+   * Distance (m) at which the vehicle must come to a stop before a junction it
+   * has to give way to (cooperative collision avoidance), or null if clear.
+   */
+  junctionStop: number | null;
 }
 
 /**

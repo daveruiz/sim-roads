@@ -60,67 +60,56 @@ function allWayStop(): RoadNetwork {
   return net;
 }
 
-/** Single-lane roundabout with four entries/exits; entries yield to the ring. */
-function roundabout(): RoadNetwork {
-  const net = new RoadNetwork();
-  const R = 40;
-  const ringNodes: string[] = [];
-  const count = 8;
+/**
+ * Add a one-way circular roundabout centred at `c` with radius `R` and `count`
+ * ring nodes, plus a two-way radial spoke at each angle in `spokeAngles`.
+ * Returns the external node id of each spoke (to connect roads to). Entries
+ * yield to the ring; the junction setback lets the merge be a clean turn.
+ */
+function addRoundabout(
+  net: RoadNetwork,
+  c: Vec2,
+  R: number,
+  count: number,
+  spokeAngles: number[],
+  spokeLen = 55
+): string[] {
+  const ring: string[] = [];
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2;
-    ringNodes.push(net.addNode({ x: Math.cos(a) * R, y: Math.sin(a) * R }).id);
+    ring.push(net.addNode({ x: c.x + Math.cos(a) * R, y: c.y + Math.sin(a) * R }).id);
   }
-  // One-way ring: each segment goes from node i to node i-1 (one step along the
-  // short arc). Bézier handles bulge outward so the ring reads as a circle.
   const step = (Math.PI * 2) / count;
   const bulge = R / Math.cos(Math.PI / count);
   for (let i = 0; i < count; i++) {
-    const from = ringNodes[i];
-    const to = ringNodes[(i + count - 1) % count];
-    const seg = net.addSegment(from, to, { lanesForward: 1, lanesBackward: 0 });
+    const seg = net.addSegment(ring[i], ring[(i + count - 1) % count], {
+      lanesForward: 1,
+      lanesBackward: 0,
+    });
     const a0 = (i / count) * Math.PI * 2;
-    const h1a = a0 - step * 0.33;
-    const h2a = a0 - step * 0.66;
     net.updateSegment(seg.id, {
-      h1: { x: Math.cos(h1a) * bulge, y: Math.sin(h1a) * bulge },
-      h2: { x: Math.cos(h2a) * bulge, y: Math.sin(h2a) * bulge },
+      h1: { x: c.x + Math.cos(a0 - step * 0.33) * bulge, y: c.y + Math.sin(a0 - step * 0.33) * bulge },
+      h2: { x: c.x + Math.cos(a0 - step * 0.66) * bulge, y: c.y + Math.sin(a0 - step * 0.66) * bulge },
     });
   }
-  for (let k = 0; k < 4; k++) {
-    const idx = k * 2;
-    const a = (idx / count) * Math.PI * 2;
-    const P = { x: Math.cos(a) * R, y: Math.sin(a) * R }; // ring node position
-    const T = { x: Math.sin(a), y: -Math.cos(a) }; // ring travel direction here
-    const N = { x: Math.cos(a), y: Math.sin(a) }; // outward radial
-    const A = ringNodes[idx];
-    const L = 58; // spoke length outward
-    const off = 22; // tangential separation of entry vs exit
-    const K = 22; // Bézier handle length
-
-    // Entry (one-way INTO the ring): arrives from outside-upstream and merges
-    // along the ring tangent, so the connector is a clean merge — not a 270°
-    // loop caused by a radial approach overshooting the offset ring lane.
-    const inPos = { x: P.x + N.x * L - T.x * off, y: P.y + N.y * L - T.y * off };
-    const extIn = net.addNode(inPos);
-    const inLen = Math.hypot(P.x - inPos.x, P.y - inPos.y) || 1;
-    const entry = net.addSegment(extIn.id, A, { lanesForward: 1, lanesBackward: 0, speedLimit: 11 });
-    net.updateSegment(entry.id, {
-      h1: { x: inPos.x + ((P.x - inPos.x) / inLen) * K, y: inPos.y + ((P.y - inPos.y) / inLen) * K },
-      h2: { x: P.x - T.x * K, y: P.y - T.y * K },
-    });
-    net.setSign(entry.id, A, "yield");
-
-    // Exit (one-way OUT of the ring): leaves along the ring tangent, then curves
-    // outward to the external node.
-    const outPos = { x: P.x + N.x * L + T.x * off, y: P.y + N.y * L + T.y * off };
-    const extOut = net.addNode(outPos);
-    const outLen = Math.hypot(outPos.x - P.x, outPos.y - P.y) || 1;
-    const exit = net.addSegment(A, extOut.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 11 });
-    net.updateSegment(exit.id, {
-      h1: { x: P.x + T.x * K, y: P.y + T.y * K },
-      h2: { x: outPos.x - ((outPos.x - P.x) / outLen) * K, y: outPos.y - ((outPos.y - P.y) / outLen) * K },
-    });
+  const exts: string[] = [];
+  for (const sa of spokeAngles) {
+    const idx = ((Math.round(sa / step) % count) + count) % count;
+    const ext = net.addNode({ x: c.x + Math.cos(sa) * (R + spokeLen), y: c.y + Math.sin(sa) * (R + spokeLen) });
+    // Two-way radial spoke: forward lane enters, backward lane exits. The entry
+    // approaches radially (not alongside the ring) so it doesn't overlap
+    // circulating traffic, and yields.
+    const spoke = net.addSegment(ext.id, ring[idx], { lanesForward: 1, lanesBackward: 1, speedLimit: 12 });
+    net.setSign(spoke.id, ring[idx], "yield");
+    exts.push(ext.id);
   }
+  return exts;
+}
+
+/** Single-lane roundabout with four entries/exits; entries yield to the ring. */
+function roundabout(): RoadNetwork {
+  const net = new RoadNetwork();
+  addRoundabout(net, { x: 0, y: 0 }, 46, 20, [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]);
   return net;
 }
 
