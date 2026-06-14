@@ -89,13 +89,37 @@ function roundabout(): RoadNetwork {
   for (let k = 0; k < 4; k++) {
     const idx = k * 2;
     const a = (idx / count) * Math.PI * 2;
-    const ext: Vec2 = { x: Math.cos(a) * (R + 55), y: Math.sin(a) * (R + 55) };
-    const extNode = net.addNode(ext);
-    const entry = net.addSegment(extNode.id, ringNodes[idx], {
-      lanesForward: 1,
-      lanesBackward: 1,
+    const P = { x: Math.cos(a) * R, y: Math.sin(a) * R }; // ring node position
+    const T = { x: Math.sin(a), y: -Math.cos(a) }; // ring travel direction here
+    const N = { x: Math.cos(a), y: Math.sin(a) }; // outward radial
+    const A = ringNodes[idx];
+    const L = 58; // spoke length outward
+    const off = 22; // tangential separation of entry vs exit
+    const K = 22; // Bézier handle length
+
+    // Entry (one-way INTO the ring): arrives from outside-upstream and merges
+    // along the ring tangent, so the connector is a clean merge — not a 270°
+    // loop caused by a radial approach overshooting the offset ring lane.
+    const inPos = { x: P.x + N.x * L - T.x * off, y: P.y + N.y * L - T.y * off };
+    const extIn = net.addNode(inPos);
+    const inLen = Math.hypot(P.x - inPos.x, P.y - inPos.y) || 1;
+    const entry = net.addSegment(extIn.id, A, { lanesForward: 1, lanesBackward: 0, speedLimit: 11 });
+    net.updateSegment(entry.id, {
+      h1: { x: inPos.x + ((P.x - inPos.x) / inLen) * K, y: inPos.y + ((P.y - inPos.y) / inLen) * K },
+      h2: { x: P.x - T.x * K, y: P.y - T.y * K },
     });
-    net.setSign(entry.id, ringNodes[idx], "yield");
+    net.setSign(entry.id, A, "yield");
+
+    // Exit (one-way OUT of the ring): leaves along the ring tangent, then curves
+    // outward to the external node.
+    const outPos = { x: P.x + N.x * L + T.x * off, y: P.y + N.y * L + T.y * off };
+    const extOut = net.addNode(outPos);
+    const outLen = Math.hypot(outPos.x - P.x, outPos.y - P.y) || 1;
+    const exit = net.addSegment(A, extOut.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 11 });
+    net.updateSegment(exit.id, {
+      h1: { x: P.x + T.x * K, y: P.y + T.y * K },
+      h2: { x: outPos.x - ((outPos.x - P.x) / outLen) * K, y: outPos.y - ((outPos.y - P.y) / outLen) * K },
+    });
   }
   return net;
 }
