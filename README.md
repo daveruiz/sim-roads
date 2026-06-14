@@ -45,8 +45,10 @@ seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
 `Esc` cancela · en simulación, `Espacio` play/pausa y `R` reinicia.
 - **Escenarios** (desplegable): intersección con STOP, cruce en T (ceda),
   STOP de 4 direcciones, rotonda (2 carriles), incorporación a autovía, salida de
-  autovía, carretera con curvas y un **mapa grande** (rotonda de 3 carriles +
-  intersección + autovía con entrada y salida interconectadas). Los multicarril usan conexiones manuales para imponer
+  autovía, carretera con curvas, un **mapa grande** (rotonda de 3 carriles +
+  intersección + autovía con entrada y salida interconectadas) y una
+  **Metrópolis generada** proceduralmente (rejilla de cruces con prioridad y
+  rotondas multicarril unidos por arterias; ~500 carriles). Los multicarril usan conexiones manuales para imponer
   disciplina de carril (p. ej. la incorporación entra solo al carril derecho).
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 
