@@ -8,8 +8,9 @@ export interface Preset {
   build: () => RoadNetwork;
 }
 
-/** Forward-lane reference helper for wiring manual connectors in presets. */
+/** Forward / backward lane reference helpers for wiring manual connectors. */
 const FL = (segment: string, index = 0): LaneRef => ({ segment, dir: "forward", index });
+const BL = (segment: string, index = 0): LaneRef => ({ segment, dir: "backward", index });
 
 /** Cross intersection: priority main road (N–S), STOP on the minor road (E–W). */
 function intersection(): RoadNetwork {
@@ -62,9 +63,15 @@ function allWayStop(): RoadNetwork {
 
 /**
  * Add a one-way circular roundabout centred at `c` with radius `R` and `count`
- * ring nodes, plus a two-way radial spoke at each angle in `spokeAngles`.
- * Returns the external node id of each spoke (to connect roads to). Entries
- * yield to the ring; the junction setback lets the merge be a clean turn.
+ * ring nodes (one-way, `ringLanes` concentric lanes), plus a two-way radial
+ * spoke at each angle in `spokeAngles`. Returns the external node id of each
+ * spoke (to connect roads to).
+ *
+ * Lane discipline is wired with manual connectors so that:
+ *  - circulating traffic stays in its lane (no weaving between ring lanes);
+ *  - each entry can feed any ring lane and any ring lane can reach each exit
+ *    (so all lanes are used without modelling lane changes);
+ *  - entries yield to the ring.
  */
 function addRoundabout(
   net: RoadNetwork,
@@ -72,7 +79,8 @@ function addRoundabout(
   R: number,
   count: number,
   spokeAngles: number[],
-  spokeLen = 55
+  spokeLen = 55,
+  ringLanes = 1
 ): string[] {
   const ring: string[] = [];
   for (let i = 0; i < count; i++) {
@@ -81,9 +89,10 @@ function addRoundabout(
   }
   const step = (Math.PI * 2) / count;
   const bulge = R / Math.cos(Math.PI / count);
+  const ringSeg: string[] = [];
   for (let i = 0; i < count; i++) {
     const seg = net.addSegment(ring[i], ring[(i + count - 1) % count], {
-      lanesForward: 1,
+      lanesForward: ringLanes,
       lanesBackward: 0,
     });
     const a0 = (i / count) * Math.PI * 2;
@@ -91,25 +100,39 @@ function addRoundabout(
       h1: { x: c.x + Math.cos(a0 - step * 0.33) * bulge, y: c.y + Math.sin(a0 - step * 0.33) * bulge },
       h2: { x: c.x + Math.cos(a0 - step * 0.66) * bulge, y: c.y + Math.sin(a0 - step * 0.66) * bulge },
     });
+    ringSeg.push(seg.id);
   }
+  // Lane-preserving through movements at every ring node (inSeg ends at the
+  // node, outSeg leaves it).
+  for (let n = 0; n < count; n++) {
+    const inSeg = ringSeg[(n + 1) % count];
+    const outSeg = ringSeg[n];
+    for (let i = 0; i < ringLanes; i++) net.toggleLink(ring[n], FL(inSeg, i), FL(outSeg, i));
+  }
+
   const exts: string[] = [];
   for (const sa of spokeAngles) {
     const idx = ((Math.round(sa / step) % count) + count) % count;
     const ext = net.addNode({ x: c.x + Math.cos(sa) * (R + spokeLen), y: c.y + Math.sin(sa) * (R + spokeLen) });
-    // Two-way radial spoke: forward lane enters, backward lane exits. The entry
-    // approaches radially (not alongside the ring) so it doesn't overlap
-    // circulating traffic, and yields.
+    // Two-way radial spoke: forward lane enters, backward lane exits. Radial
+    // approach (not alongside the ring) avoids overlapping circulating traffic.
     const spoke = net.addSegment(ext.id, ring[idx], { lanesForward: 1, lanesBackward: 1, speedLimit: 12 });
     net.setSign(spoke.id, ring[idx], "yield");
+    const inSeg = ringSeg[(idx + 1) % count];
+    const outSeg = ringSeg[idx];
+    for (let i = 0; i < ringLanes; i++) {
+      net.toggleLink(ring[idx], FL(spoke.id, 0), FL(outSeg, i)); // enter into any lane
+      net.toggleLink(ring[idx], FL(inSeg, i), BL(spoke.id, 0)); // exit from any lane
+    }
     exts.push(ext.id);
   }
   return exts;
 }
 
-/** Single-lane roundabout with four entries/exits; entries yield to the ring. */
+/** Two-lane roundabout with four entries/exits; entries yield to the ring. */
 function roundabout(): RoadNetwork {
   const net = new RoadNetwork();
-  addRoundabout(net, { x: 0, y: 0 }, 46, 20, [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]);
+  addRoundabout(net, { x: 0, y: 0 }, 48, 20, [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2], 55, 2);
   return net;
 }
 
@@ -187,14 +210,15 @@ function road(net: RoadNetwork, a: string, b: string, opts?: Parameters<RoadNetw
 function cityMap(): RoadNetwork {
   const net = new RoadNetwork();
 
-  // Roundabout with four spokes (E, S, W, N external nodes).
+  // Three-lane roundabout with four spokes (E, S, W, N external nodes).
   const [extE, extS, extW, extN] = addRoundabout(
     net,
-    { x: -150, y: 0 },
-    36,
-    20,
+    { x: -170, y: 0 },
+    44,
+    24,
     [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2],
-    50
+    50,
+    3
   );
 
   // Terminals hanging off three of the spokes.

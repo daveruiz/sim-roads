@@ -44,9 +44,9 @@ Las flechas claras sobre cada carril indican el **sentido de circulación**.
 seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
 `Esc` cancela · en simulación, `Espacio` play/pausa y `R` reinicia.
 - **Escenarios** (desplegable): intersección con STOP, cruce en T (ceda),
-  STOP de 4 direcciones, rotonda, incorporación a autovía, salida de autovía,
-  carretera con curvas y un **mapa grande** (rotonda + intersección + autovía con
-  entrada y salida interconectadas). Los multicarril usan conexiones manuales para imponer
+  STOP de 4 direcciones, rotonda (2 carriles), incorporación a autovía, salida de
+  autovía, carretera con curvas y un **mapa grande** (rotonda de 3 carriles +
+  intersección + autovía con entrada y salida interconectadas). Los multicarril usan conexiones manuales para imponer
   disciplina de carril (p. ej. la incorporación entra solo al carril derecho).
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 
@@ -103,6 +103,15 @@ se le calcula la **ruta más rápida** con Dijkstra sobre el grafo de carriles
 velocidad). El vehículo sigue esa ruta fija hasta salir, en lugar de decidir los
 giros al azar (`src/sim/Router.ts`). En cruces y rotondas esto produce
 trayectorias coherentes y evita que los coches den vueltas sin sentido.
+
+**Reparto entre carriles.** En vías y rotondas de varios carriles, todos los
+carriles tienen prácticamente el mismo coste, así que un Dijkstra puro metería
+todo el tráfico en uno solo (normalmente el interior, más corto). Para evitarlo,
+cada vehículo recibe un **carril preferido** que abarata ligeramente ese índice
+de carril en todo su trayecto, repartiendo el tráfico entre los carriles
+paralelos sin necesidad de modelar cambios de carril. Las rotondas multicarril
+usan disciplina de carril (sin *weaving*): se circula en el carril elegido y la
+entrada puede alimentar cualquier carril y cualquier carril puede salir.
 
 Las incorporaciones (entradas de rotonda, *on-ramps*) aplican **metering de
 entrada**: un vehículo que cede no entra a la unión salvo que haya hueco temporal
