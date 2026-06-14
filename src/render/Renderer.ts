@@ -148,17 +148,22 @@ export class Renderer {
 
   private drawJunctions(): void {
     const ctx = this.ctx;
-    // Fill a disc at each node sized to the widest connected road.
-    for (const node of this.net.nodes.values()) {
-      let radius = 2;
-      for (const seg of this.net.segments.values()) {
-        if (seg.startNode === node.id || seg.endNode === node.id) {
-          const wTotal = (seg.lanesForward + seg.lanesBackward) * seg.laneWidth;
-          radius = Math.max(radius, wTotal / 2);
-        }
+    // Count how many segments meet at each node.
+    const degree = new Map<string, number>();
+    const radiusOf = new Map<string, number>();
+    for (const seg of this.net.segments.values()) {
+      const r = ((seg.lanesForward + seg.lanesBackward) * seg.laneWidth) / 2;
+      for (const nid of [seg.startNode, seg.endNode]) {
+        degree.set(nid, (degree.get(nid) ?? 0) + 1);
+        radiusOf.set(nid, Math.max(radiusOf.get(nid) ?? 2, r));
       }
+    }
+    // Only fill a disc at real junctions (degree >= 3); through nodes have
+    // continuous asphalt, so a disc there just adds a scalloped edge.
+    for (const node of this.net.nodes.values()) {
+      if ((degree.get(node.id) ?? 0) < 3) continue;
       ctx.beginPath();
-      ctx.arc(node.pos.x, node.pos.y, radius, 0, Math.PI * 2);
+      ctx.arc(node.pos.x, node.pos.y, (radiusOf.get(node.id) ?? 2) + 1, 0, Math.PI * 2);
       ctx.fillStyle = COLORS.junction;
       ctx.fill();
     }
