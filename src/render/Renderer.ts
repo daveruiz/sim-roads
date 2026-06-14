@@ -178,25 +178,26 @@ export class Renderer {
       const F = seg.lanesForward;
       const B = seg.lanesBackward;
       const total = (F + B) * w;
+      const side = seg.laneFlip ? -1 : 1; // matches the build's lane offset side
 
       // Asphalt: forward lanes sit on the right (+perp), backward on the left
       // (-perp). Centre the asphalt band over both halves.
-      const mid = (F - B) * w * 0.5; // band centre offset from geometric centerline
+      const mid = (F - B) * w * 0.5 * side; // band centre offset from centerline
       const asphalt = points.map((p, i) => add(p, scale(perp(tangents[i]), mid)));
       this.stroke(asphalt, total, COLORS.asphalt);
 
       // Outer edge lines.
-      this.offsetLine(points, tangents, F * w, 0.18, COLORS.edgeLine);
-      this.offsetLine(points, tangents, -B * w, 0.18, COLORS.edgeLine);
+      this.offsetLine(points, tangents, F * w * side, 0.18, COLORS.edgeLine);
+      this.offsetLine(points, tangents, -B * w * side, 0.18, COLORS.edgeLine);
 
       // Centre divider between opposing flows (solid yellow when two-way).
       if (F > 0 && B > 0) this.offsetLine(points, tangents, 0, 0.22, COLORS.centerLine);
 
       // Dashed lane separators within each direction.
       for (let i = 1; i < F; i++)
-        this.offsetLine(points, tangents, i * w, 0.14, COLORS.laneLine, [2.5, 3]);
+        this.offsetLine(points, tangents, i * w * side, 0.14, COLORS.laneLine, [2.5, 3]);
       for (let j = 1; j < B; j++)
-        this.offsetLine(points, tangents, -j * w, 0.14, COLORS.laneLine, [2.5, 3]);
+        this.offsetLine(points, tangents, -j * w * side, 0.14, COLORS.laneLine, [2.5, 3]);
 
       if (opts.selectedSegment === seg.id) {
         this.stroke(asphalt, total + 0.6, COLORS.selected);

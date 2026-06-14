@@ -53,11 +53,12 @@ export function buildGraph(
     const w = seg.laneWidth;
     const sbStart = setbackOf(seg.startNode);
     const sbEnd = setbackOf(seg.endNode);
+    const side = seg.laneFlip ? -1 : 1; // -1 offsets lanes to the left of travel
 
     // perp(t) points to the driver's right (screen coords, y down). Forward
     // traffic keeps to the right of the centerline (drive-on-right).
     for (let i = 0; i < seg.lanesForward; i++) {
-      const offset = (i + LANE_SAMPLE_OFFSET) * w;
+      const offset = (i + LANE_SAMPLE_OFFSET) * w * side;
       const pts = trimPoints(points.map((p, k) => add(p, scale(perp(tangents[k]), offset))), sbStart, sbEnd);
       const lane = makeLane(seg, seg.startNode, seg.endNode, i, "forward", pts);
       lanes.push(lane);
@@ -68,7 +69,7 @@ export function buildGraph(
 
     // Backward lanes sit on the left half and run end->start (points reversed).
     for (let j = 0; j < seg.lanesBackward; j++) {
-      const offset = (j + LANE_SAMPLE_OFFSET) * w;
+      const offset = (j + LANE_SAMPLE_OFFSET) * w * side;
       const pts = points.map((p, k) => add(p, scale(perp(tangents[k]), -offset)));
       pts.reverse();
       // After reversing, travel order is end->start, so trim end-node first.

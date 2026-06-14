@@ -28,6 +28,12 @@ export interface Segment {
   lanesBackward: number; // lanes in end -> start direction
   laneWidth: number;
   speedLimit: number; // m/s
+  /**
+   * Offset lanes to the LEFT of travel instead of the default right. Lets a
+   * one-way ring keep its circulation sense while its lanes/asphalt sit on the
+   * inside of the circle (so spokes meet the outer edge). No effect on flow.
+   */
+  laneFlip?: boolean;
 }
 
 export type SignType = "yield" | "stop";

@@ -73,6 +73,7 @@ export class RoadNetwork {
       lanesBackward: opts?.lanesBackward ?? 1,
       laneWidth: opts?.laneWidth ?? 3.5,
       speedLimit: opts?.speedLimit ?? 13.9, // ~50 km/h
+      laneFlip: opts?.laneFlip ?? false,
     };
     this.segments.set(seg.id, seg);
     this.markDirty();

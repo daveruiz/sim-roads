@@ -91,23 +91,25 @@ function addRoundabout(
   const bulge = R / Math.cos(Math.PI / count);
   const ringSeg: string[] = [];
   for (let i = 0; i < count; i++) {
-    // Ring travels node i -> node i+1 so its lanes/asphalt sit INSIDE the ring
-    // circle; the ring nodes then lie on the OUTER edge, where spokes join.
-    const seg = net.addSegment(ring[i], ring[(i + 1) % count], {
+    // Ring travels node i -> node i-1 (drive-on-right circulation sense), but
+    // laneFlip puts its lanes/asphalt INSIDE the circle, so the ring nodes lie
+    // on the OUTER edge where the spokes join.
+    const seg = net.addSegment(ring[i], ring[(i + count - 1) % count], {
       lanesForward: ringLanes,
       lanesBackward: 0,
+      laneFlip: true,
     });
     const a0 = (i / count) * Math.PI * 2;
     net.updateSegment(seg.id, {
-      h1: { x: c.x + Math.cos(a0 + step * 0.33) * bulge, y: c.y + Math.sin(a0 + step * 0.33) * bulge },
-      h2: { x: c.x + Math.cos(a0 + step * 0.66) * bulge, y: c.y + Math.sin(a0 + step * 0.66) * bulge },
+      h1: { x: c.x + Math.cos(a0 - step * 0.33) * bulge, y: c.y + Math.sin(a0 - step * 0.33) * bulge },
+      h2: { x: c.x + Math.cos(a0 - step * 0.66) * bulge, y: c.y + Math.sin(a0 - step * 0.66) * bulge },
     });
-    ringSeg.push(seg.id); // ringSeg[i] runs node i -> node i+1
+    ringSeg.push(seg.id); // ringSeg[i] runs node i -> node i-1
   }
   // Lane-preserving through movements at every ring node (inSeg ends at the
   // node, outSeg leaves it).
   for (let n = 0; n < count; n++) {
-    const inSeg = ringSeg[(n + count - 1) % count];
+    const inSeg = ringSeg[(n + 1) % count];
     const outSeg = ringSeg[n];
     for (let i = 0; i < ringLanes; i++) net.toggleLink(ring[n], FL(inSeg, i), FL(outSeg, i));
   }
@@ -120,7 +122,7 @@ function addRoundabout(
     // approach (not alongside the ring) avoids overlapping circulating traffic.
     const spoke = net.addSegment(ext.id, ring[idx], { lanesForward: 1, lanesBackward: 1, speedLimit: 12 });
     net.setSign(spoke.id, ring[idx], "yield");
-    const inSeg = ringSeg[(idx + count - 1) % count];
+    const inSeg = ringSeg[(idx + 1) % count];
     const outSeg = ringSeg[idx];
     for (let i = 0; i < ringLanes; i++) {
       net.toggleLink(ring[idx], FL(spoke.id, 0), FL(outSeg, i)); // enter into any lane
