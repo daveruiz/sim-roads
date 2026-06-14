@@ -119,8 +119,8 @@ function highwayMerge(): RoadNetwork {
   const a = net.addNode({ x: -160, y: 0 });
   const b = net.addNode({ x: 0, y: 0 });
   const c = net.addNode({ x: 160, y: 0 });
-  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 28 });
-  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 28 });
+  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
   const r = net.addNode({ x: -95, y: 58 });
   const ramp = net.addSegment(r.id, b.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 18 });
   net.updateSegment(ramp.id, { h1: { x: -58, y: 52 }, h2: { x: -18, y: 12 } });
@@ -138,8 +138,8 @@ function highwayExit(): RoadNetwork {
   const a = net.addNode({ x: -160, y: 0 });
   const b = net.addNode({ x: 0, y: 0 });
   const c = net.addNode({ x: 160, y: 0 });
-  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 28 });
-  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 28 });
+  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
   const r = net.addNode({ x: 100, y: 60 });
   const ramp = net.addSegment(b.id, r.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 18 });
   net.updateSegment(ramp.id, { h1: { x: 22, y: 6 }, h2: { x: 62, y: 48 } });
@@ -174,6 +174,71 @@ function sCurves(): RoadNetwork {
   return net;
 }
 
+/** Two-way road helper; optional sign on the approach to `b`. */
+function road(net: RoadNetwork, a: string, b: string, opts?: Parameters<RoadNetwork["addSegment"]>[2]) {
+  return net.addSegment(a, b, { lanesForward: 1, lanesBackward: 1, ...opts });
+}
+
+/**
+ * A larger interconnected map: a roundabout feeding a priority cross
+ * intersection, plus a two-lane motorway with an on-ramp (merge) and an
+ * off-ramp (exit). Multiple entry/exit terminals create rich, mixed traffic.
+ */
+function cityMap(): RoadNetwork {
+  const net = new RoadNetwork();
+
+  // Roundabout with four spokes (E, S, W, N external nodes).
+  const [extE, extS, extW, extN] = addRoundabout(
+    net,
+    { x: -150, y: 0 },
+    36,
+    20,
+    [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2],
+    50
+  );
+
+  // Terminals hanging off three of the spokes.
+  road(net, net.addNode({ x: -330, y: 0 }).id, extW);
+  road(net, net.addNode({ x: -150, y: -180 }).id, extN);
+  road(net, net.addNode({ x: -150, y: 180 }).id, extS);
+
+  // Main road from the roundabout to a cross intersection.
+  const xc = net.addNode({ x: 70, y: 0 }).id;
+  road(net, extE, xc);
+
+  // Cross intersection: priority E–W, the north arm yields with a STOP.
+  const txe = net.addNode({ x: 220, y: 0 }).id;
+  road(net, xc, txe);
+  const txn = net.addNode({ x: 70, y: -140 }).id;
+  const nArm = road(net, txn, xc);
+  net.setSign(nArm.id, xc, "stop");
+
+  // Two-lane one-way motorway with a merging on-ramp and a diverging off-ramp.
+  const hwW = net.addNode({ x: -340, y: 170 }).id;
+  const hwM = net.addNode({ x: 70, y: 170 }).id;
+  const hwE = net.addNode({ x: 360, y: 170 }).id;
+  const ab = net.addSegment(hwW, hwM, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  const bc = net.addSegment(hwM, hwE, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+
+  // On-ramp: the intersection's south arm slips down onto the motorway.
+  const ramp = net.addSegment(xc, hwM, { lanesForward: 1, lanesBackward: 0, speedLimit: 16 });
+  net.updateSegment(ramp.id, { h1: { x: 70, y: 70 }, h2: { x: 52, y: 158 } });
+  net.setSign(ramp.id, hwM, "yield");
+
+  // Off-ramp: the right lane may exit to a terminal.
+  const hwOf = net.addNode({ x: 220, y: 270 }).id;
+  const off = net.addSegment(hwM, hwOf, { lanesForward: 1, lanesBackward: 0, speedLimit: 16 });
+  net.updateSegment(off.id, { h1: { x: 100, y: 184 }, h2: { x: 185, y: 240 } });
+
+  // Lane discipline at the motorway junction.
+  net.toggleLink(hwM, FL(ab.id, 0), FL(bc.id, 0));
+  net.toggleLink(hwM, FL(ab.id, 1), FL(bc.id, 1));
+  net.toggleLink(hwM, FL(ab.id, 1), FL(off.id, 0));
+  net.toggleLink(hwM, FL(ramp.id, 0), FL(bc.id, 1));
+
+  return net;
+}
+
 export const PRESETS: Preset[] = [
   { id: "intersection", label: "Intersección (STOP)", build: intersection },
   { id: "tjunction", label: "Cruce en T (ceda)", build: tJunction },
@@ -182,4 +247,5 @@ export const PRESETS: Preset[] = [
   { id: "merge", label: "Incorporación autovía", build: highwayMerge },
   { id: "exit", label: "Salida de autovía", build: highwayExit },
   { id: "scurves", label: "Carretera con curvas", build: sCurves },
+  { id: "city", label: "Ciudad (mapa grande)", build: cityMap },
 ];

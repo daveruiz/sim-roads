@@ -44,8 +44,9 @@ Las flechas claras sobre cada carril indican el **sentido de circulación**.
 seleccionan herramienta · `A` vuelve un nodo a automático (en Conexión) ·
 `Esc` cancela · en simulación, `Espacio` play/pausa y `R` reinicia.
 - **Escenarios** (desplegable): intersección con STOP, cruce en T (ceda),
-  STOP de 4 direcciones, rotonda, incorporación a autovía, salida de autovía y
-  carretera con curvas. Los multicarril usan conexiones manuales para imponer
+  STOP de 4 direcciones, rotonda, incorporación a autovía, salida de autovía,
+  carretera con curvas y un **mapa grande** (rotonda + intersección + autovía con
+  entrada y salida interconectadas). Los multicarril usan conexiones manuales para imponer
   disciplina de carril (p. ej. la incorporación entra solo al carril derecho).
 - Guardar/Restaurar (localStorage) y Exportar/Importar la pista como JSON.
 
@@ -119,8 +120,17 @@ Reglas incluidas:
 |-------|----------|
 | `cruise` | Acelera hasta la velocidad deseada (límite de vía / vehículo). |
 | `car-following` | Distancia de seguridad al líder (modelo IDM). |
-| `give-way` | Ceda el paso / STOP con *gap acceptance* en cruces. |
+| `proximity` | Anticolisión de proximidad (frena ante vehículos del mismo sentido físicamente delante, en cualquier carril). |
+| `junction` | Prioridad y anticolisión cooperativa en cruces, fusiones y rotondas. |
 | `curve-speed` | Reduce la velocidad según el radio de las curvas. |
+
+**Anticolisión.** Los cruces tienen área real (los carriles se retraen del nodo
+y los conectores cruzan el interior). La regla `junction` resuelve la prioridad
+con un **orden total por nodo** (señal → si hay empate, quien esté más cerca de
+entrar; desempate por id), lo que evita ciclos de cesión (deadlocks) y mantiene
+exclusión mutua: no se entra a un cruce mientras un movimiento en conflicto esté
+en curso. Además, tras integrar el movimiento, una **salvaguarda de separación**
+empuja hacia atrás a cualquier vehículo que solape al de delante en su ruta.
 
 **Añadir un comportamiento** = escribir una regla y añadirla al array. Por
 ejemplo, semáforos, límites por tramo, distancia de cortesía, agresividad del
@@ -129,13 +139,15 @@ conductor, cambios de carril, etc. No hay que tocar el bucle de simulación.
 ## Limitaciones conocidas / próximos pasos
 - **Demanda**: el destino se elige al azar entre las salidas alcanzables.
   Siguiente paso: matrices origen→destino configurables por entrada/salida.
-- **Cambios de carril**: aún no hay maniobras de cambio de carril ni
-  *gap acceptance* lateral; las incorporaciones se resuelven por car-following
-  sobre el carril común y metering de entrada. Es la siguiente regla a
-  incorporar (y lo que permitiría rotondas y autovías de varios carriles).
-- **Saturación**: una rotonda de un solo carril muy saturada puede acabar
-  bloqueándose (fenómeno real en rotondas pequeñas, agravado aquí por no tener
-  cambios de carril). A densidades moderadas fluye con normalidad.
+- **Cambios de carril / incorporaciones**: aún no hay maniobras de cambio de
+  carril ni *gap acceptance* lateral con carril de aceleración. En una
+  incorporación muy saturada, el coche que cede espera en el punto de unión y
+  puede solaparse visualmente con el tráfico del carril principal (su "línea de
+  ceda" cae sobre el carril). Es la siguiente regla a incorporar (y lo que
+  permitiría rotondas y autovías de varios carriles de verdad). En el resto de
+  escenarios la anticolisión mantiene los vehículos separados.
+- **Saturación**: un cruce o rotonda muy por encima de su capacidad se congestiona
+  (fenómeno real). A densidades moderadas fluye con normalidad.
 - **Semáforos** y **carriles de giro dedicados**: pendientes (encajan como una
   regla y un tipo de control de nodo más).
 - Prioridad en cruces con control mutuo (p. ej. STOP de 4 direcciones) usa una
