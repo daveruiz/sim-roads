@@ -1,16 +1,11 @@
 import { RoadNetwork } from "./RoadNetwork.ts";
 import { Vec2 } from "../core/vec.ts";
-import { LaneRef } from "./types.ts";
 
 export interface Preset {
   id: string;
   label: string;
   build: () => RoadNetwork;
 }
-
-/** Forward / backward lane reference helpers for wiring manual connectors. */
-const FL = (segment: string, index = 0): LaneRef => ({ segment, dir: "forward", index });
-const BL = (segment: string, index = 0): LaneRef => ({ segment, dir: "backward", index });
 
 /** Cross intersection: priority main road (N–S), STOP on the minor road (E–W). */
 function intersection(): RoadNetwork {
@@ -67,11 +62,9 @@ function allWayStop(): RoadNetwork {
  * spoke at each angle in `spokeAngles`. Returns the external node id of each
  * spoke (to connect roads to).
  *
- * Lane discipline is wired with manual connectors so that:
- *  - circulating traffic stays in its lane (no weaving between ring lanes);
- *  - each entry can feed any ring lane and any ring lane can reach each exit
- *    (so all lanes are used without modelling lane changes);
- *  - entries yield to the ring.
+ * Connectors are generated automatically: ring-through movements are straight
+ * (lanes preserved) and the spoke entry/exit are turns (outer lane only), so
+ * entries/exits use the outer ring lane and yield to circulating traffic.
  */
 function addRoundabout(
   net: RoadNetwork,
@@ -89,7 +82,6 @@ function addRoundabout(
   }
   const step = (Math.PI * 2) / count;
   const bulge = R / Math.cos(Math.PI / count);
-  const ringSeg: string[] = [];
   for (let i = 0; i < count; i++) {
     // Ring travels node i -> node i-1 (drive-on-right circulation sense), but
     // laneFlip puts its lanes/asphalt INSIDE the circle, so the ring nodes lie
@@ -104,15 +96,9 @@ function addRoundabout(
       h1: { x: c.x + Math.cos(a0 - step * 0.33) * bulge, y: c.y + Math.sin(a0 - step * 0.33) * bulge },
       h2: { x: c.x + Math.cos(a0 - step * 0.66) * bulge, y: c.y + Math.sin(a0 - step * 0.66) * bulge },
     });
-    ringSeg.push(seg.id); // ringSeg[i] runs node i -> node i-1
   }
-  // Lane-preserving through movements at every ring node (inSeg ends at the
-  // node, outSeg leaves it).
-  for (let n = 0; n < count; n++) {
-    const inSeg = ringSeg[(n + 1) % count];
-    const outSeg = ringSeg[n];
-    for (let i = 0; i < ringLanes; i++) net.toggleLink(ring[n], FL(inSeg, i), FL(outSeg, i));
-  }
+  // Connectors are generated automatically: ring-through movements are straight
+  // (lanes preserved) and spoke entry/exit are turns (outer lane only).
 
   const exts: string[] = [];
   for (const sa of spokeAngles) {
@@ -122,12 +108,6 @@ function addRoundabout(
     // approach (not alongside the ring) avoids overlapping circulating traffic.
     const spoke = net.addSegment(ext.id, ring[idx], { lanesForward: 1, lanesBackward: 1, speedLimit: 12 });
     net.setSign(spoke.id, ring[idx], "yield");
-    const inSeg = ringSeg[(idx + 1) % count];
-    const outSeg = ringSeg[idx];
-    for (let i = 0; i < ringLanes; i++) {
-      net.toggleLink(ring[idx], FL(spoke.id, 0), FL(outSeg, i)); // enter into any lane
-      net.toggleLink(ring[idx], FL(inSeg, i), BL(spoke.id, 0)); // exit from any lane
-    }
     exts.push(ext.id);
   }
   return exts;
@@ -146,16 +126,14 @@ function highwayMerge(): RoadNetwork {
   const a = net.addNode({ x: -160, y: 0 });
   const b = net.addNode({ x: 0, y: 0 });
   const c = net.addNode({ x: 160, y: 0 });
-  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
-  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
   const r = net.addNode({ x: -95, y: 58 });
   const ramp = net.addSegment(r.id, b.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 18 });
   net.updateSegment(ramp.id, { h1: { x: -58, y: 52 }, h2: { x: -18, y: 12 } });
   net.setSign(ramp.id, b.id, "yield");
-  // Lane discipline: main lanes go straight, the ramp merges into the right lane.
-  net.toggleLink(b.id, FL(ab.id, 0), FL(bc.id, 0));
-  net.toggleLink(b.id, FL(ab.id, 1), FL(bc.id, 1));
-  net.toggleLink(b.id, FL(ramp.id, 0), FL(bc.id, 1));
+  // Connectors auto: main lanes go straight (preserved), the ramp merges into
+  // the outer (right) lane.
   return net;
 }
 
@@ -165,15 +143,13 @@ function highwayExit(): RoadNetwork {
   const a = net.addNode({ x: -160, y: 0 });
   const b = net.addNode({ x: 0, y: 0 });
   const c = net.addNode({ x: 160, y: 0 });
-  const ab = net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
-  const bc = net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(a.id, b.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(b.id, c.id, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
   const r = net.addNode({ x: 100, y: 60 });
   const ramp = net.addSegment(b.id, r.id, { lanesForward: 1, lanesBackward: 0, speedLimit: 18 });
   net.updateSegment(ramp.id, { h1: { x: 22, y: 6 }, h2: { x: 62, y: 48 } });
-  // Lane discipline: through traffic stays in lane; the right lane can exit.
-  net.toggleLink(b.id, FL(ab.id, 0), FL(bc.id, 0));
-  net.toggleLink(b.id, FL(ab.id, 1), FL(bc.id, 1));
-  net.toggleLink(b.id, FL(ab.id, 1), FL(ramp.id, 0));
+  // Connectors auto: through traffic stays in lane; the outer (right) lane can
+  // diverge to the exit.
   return net;
 }
 
@@ -245,8 +221,8 @@ function cityMap(): RoadNetwork {
   const hwW = net.addNode({ x: -340, y: 170 }).id;
   const hwM = net.addNode({ x: 70, y: 170 }).id;
   const hwE = net.addNode({ x: 360, y: 170 }).id;
-  const ab = net.addSegment(hwW, hwM, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
-  const bc = net.addSegment(hwM, hwE, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(hwW, hwM, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
+  net.addSegment(hwM, hwE, { lanesForward: 2, lanesBackward: 0, speedLimit: 24 });
 
   // On-ramp: the intersection's south arm slips down onto the motorway.
   const ramp = net.addSegment(xc, hwM, { lanesForward: 1, lanesBackward: 0, speedLimit: 16 });
@@ -257,13 +233,8 @@ function cityMap(): RoadNetwork {
   const hwOf = net.addNode({ x: 220, y: 270 }).id;
   const off = net.addSegment(hwM, hwOf, { lanesForward: 1, lanesBackward: 0, speedLimit: 16 });
   net.updateSegment(off.id, { h1: { x: 100, y: 184 }, h2: { x: 185, y: 240 } });
-
-  // Lane discipline at the motorway junction.
-  net.toggleLink(hwM, FL(ab.id, 0), FL(bc.id, 0));
-  net.toggleLink(hwM, FL(ab.id, 1), FL(bc.id, 1));
-  net.toggleLink(hwM, FL(ab.id, 1), FL(off.id, 0));
-  net.toggleLink(hwM, FL(ramp.id, 0), FL(bc.id, 1));
-
+  // Connectors auto: through preserved, on-ramp merges to the outer lane and the
+  // outer lane diverges to the off-ramp.
   return net;
 }
 

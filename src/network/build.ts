@@ -15,6 +15,58 @@ import {
 } from "./types.ts";
 
 const LANE_SAMPLE_OFFSET = 0.5; // lane center sits half a lane from its edge
+const STRAIGHT_ANGLE = 0.6; // rad (~34°): movements below this preserve lanes
+
+/** Group lanes by their owning segment (each approach at a node). */
+function groupBySegment(lanes: Lane[]): Map<string, Lane[]> {
+  const map = new Map<string, Lane[]>();
+  for (const lane of lanes) {
+    const arr = map.get(lane.segment);
+    if (arr) arr.push(lane);
+    else map.set(lane.segment, [lane]);
+  }
+  return map;
+}
+
+/**
+ * Connect an incoming approach to an outgoing approach following the Option-A
+ * rule: a roughly straight movement preserves lanes (paired from the outer
+ * edge, so a multi-lane road keeps all its lanes through the node); a turn or
+ * merge joins only the outer (rightmost) lane of each.
+ */
+function connectApproaches(
+  node: string,
+  inLanes: Lane[],
+  outLanes: Lane[],
+  add: (node: string, inLane: Lane, outLane: Lane) => void
+): void {
+  const inS = [...inLanes].sort((a, b) => a.index - b.index); // 0 = inner, last = outer
+  const outS = [...outLanes].sort((a, b) => a.index - b.index);
+  const inOuter = inS[inS.length - 1];
+  const outOuter = outS[outS.length - 1];
+  if (!inOuter || !outOuter) return;
+
+  const angle = Math.abs(
+    signedAngle(inOuter.poly.dirAt(inOuter.poly.length), outOuter.poly.dirAt(0))
+  );
+  if (angle >= STRAIGHT_ANGLE) {
+    add(node, inOuter, outOuter); // turn / merge: outer lane to outer lane
+    return;
+  }
+  // Straight: pair lanes from the outer edge inward (clamp on count mismatch so
+  // a lane drop merges and a lane gain stays reachable). Dedupe clamped repeats.
+  const fi = inS.length;
+  const fo = outS.length;
+  const seen = new Set<string>();
+  for (let k = 0; k < Math.max(fi, fo); k++) {
+    const a = inS[Math.max(0, fi - 1 - k)];
+    const b = outS[Math.max(0, fo - 1 - k)];
+    const key = `${a.id}|${b.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    add(node, a, b);
+  }
+}
 
 /** Build the full runtime graph (lanes + connectors + conflicts) from the model. */
 export function buildGraph(
@@ -115,13 +167,16 @@ export function buildGraph(
       }
       continue;
     }
-    // Automatic mode: every compatible turn.
-    const incoming = lanesByEndNode.get(node.id) ?? [];
-    const outgoing = lanesByStartNode.get(node.id) ?? [];
-    for (const inLane of incoming) {
-      for (const outLane of outgoing) {
-        if (outLane.segment === inLane.segment) continue; // no U-turn on same road
-        addConnector(node.id, inLane, outLane);
+    // Automatic mode: connect approach to approach. STRAIGHT movements preserve
+    // lanes (paired from the outer edge); TURNS / merges join the outer lane to
+    // the outer lane (drive-on-right: you join or leave a road from its
+    // outer/rightmost lane).
+    const incoming = groupBySegment(lanesByEndNode.get(node.id) ?? []);
+    const outgoing = groupBySegment(lanesByStartNode.get(node.id) ?? []);
+    for (const [inSeg, inLanes] of incoming) {
+      for (const [outSeg, outLanes] of outgoing) {
+        if (inSeg === outSeg) continue; // no U-turn on the same road
+        connectApproaches(node.id, inLanes, outLanes, addConnector);
       }
     }
   }
