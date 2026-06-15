@@ -19,6 +19,7 @@ export interface RenderOptions {
   linkHoverNode: string | null;
   endpointGrips: EndpointGrip[];
   snapNode: string | null;
+  snapSegment: string | null;
 }
 
 const COLORS = {
@@ -277,6 +278,11 @@ export class Renderer {
         ctx.lineWidth = 0.4;
         ctx.stroke();
       }
+    }
+    // Road we'd split-and-connect to on release (connect-anywhere).
+    if (opts.snapSegment) {
+      const cl = this.centerline(this.net.segments.get(opts.snapSegment)!);
+      if (cl) this.stroke(cl.points, 0.5, COLORS.selected, [2, 2]);
     }
 
     // Endpoint grips of the selected segment (hollow rings, draggable to

@@ -1,4 +1,4 @@
-import { Vec2, sub, normalize } from "./vec.ts";
+import { Vec2, sub, normalize, lerp } from "./vec.ts";
 
 /**
  * Cubic Bézier helpers. A segment's centerline is a cubic Bézier with
@@ -10,6 +10,37 @@ export interface Cubic {
   p1: Vec2;
   p2: Vec2;
   p3: Vec2;
+}
+
+/** Split a cubic at parameter t into two cubics (de Casteljau). */
+export function splitCubic(c: Cubic, t: number): { left: Cubic; right: Cubic } {
+  const p01 = lerp(c.p0, c.p1, t);
+  const p12 = lerp(c.p1, c.p2, t);
+  const p23 = lerp(c.p2, c.p3, t);
+  const p012 = lerp(p01, p12, t);
+  const p123 = lerp(p12, p23, t);
+  const mid = lerp(p012, p123, t);
+  return {
+    left: { p0: c.p0, p1: p01, p2: p012, p3: mid },
+    right: { p0: mid, p1: p123, p2: p23, p3: c.p3 },
+  };
+}
+
+/** Nearest parameter t on a cubic to a point, by sampling. */
+export function nearestT(c: Cubic, p: Vec2): number {
+  let best = 0;
+  let bestD = Infinity;
+  const n = 60;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const q = cubicAt(c, t);
+    const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  }
+  return best;
 }
 
 export function cubicAt(c: Cubic, t: number): Vec2 {

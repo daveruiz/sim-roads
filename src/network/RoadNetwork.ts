@@ -1,5 +1,5 @@
 import { Vec2 } from "../core/vec.ts";
-import { straightControls } from "../core/bezier.ts";
+import { straightControls, splitCubic, nearestT, Cubic } from "../core/bezier.ts";
 import { nextId } from "../core/id.ts";
 import {
   RoadNode,
@@ -132,6 +132,54 @@ export class RoadNetwork {
     const fresh = this.addNode({ ...old.pos });
     this.setSegmentEndpoint(segId, which, fresh.id);
     return fresh.id;
+  }
+
+  /**
+   * Split a segment at the point on it nearest to `point`, creating a junction
+   * node there. The segment becomes its first half; a new segment (same lanes)
+   * is the second half. Returns the new node id (or null if too near an end).
+   */
+  splitSegmentAt(segId: string, point: Vec2): string | null {
+    const seg = this.segments.get(segId);
+    const start = seg && this.nodes.get(seg.startNode);
+    const end = seg && this.nodes.get(seg.endNode);
+    if (!seg || !start || !end) return null;
+    const cubic: Cubic = { p0: start.pos, p1: seg.h1, p2: seg.h2, p3: end.pos };
+    const t = nearestT(cubic, point);
+    if (t < 0.06 || t > 0.94) return null; // too close to an existing endpoint
+    const { left, right } = splitCubic(cubic, t);
+    const oldEnd = seg.endNode;
+    const mid = this.addNode(left.p3);
+
+    // Second half: mid -> old end, same lane setup.
+    this.addSegment(mid.id, oldEnd, {
+      lanesForward: seg.lanesForward,
+      lanesBackward: seg.lanesBackward,
+      laneWidth: seg.laneWidth,
+      speedLimit: seg.speedLimit,
+      laneFlip: seg.laneFlip,
+      h1: right.p1,
+      h2: right.p2,
+    });
+    // Signs on the old end approach move to the new second-half segment.
+    const second = [...this.segments.values()].find(
+      (s) => s.startNode === mid.id && s.endNode === oldEnd
+    );
+    if (second) {
+      for (const sg of this.signs) {
+        if (sg.segment === segId && sg.node === oldEnd) sg.segment = second.id;
+      }
+    }
+    // First half: shrink the original segment to start -> mid.
+    seg.endNode = mid.id;
+    seg.h1 = left.p1;
+    seg.h2 = left.p2;
+    // Manual links touching this segment become stale on a split; drop them.
+    this.links = this.links.filter(
+      (l) => l.from.segment !== segId && l.to.segment !== segId
+    );
+    this.markDirty();
+    return mid.id;
   }
 
   deleteSegment(id: string): void {

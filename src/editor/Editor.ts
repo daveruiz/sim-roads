@@ -4,7 +4,7 @@ import { Camera } from "../render/Camera.ts";
 import { samplePolyline, Cubic } from "../core/bezier.ts";
 import { Segment, SignType, LaneRef } from "../network/types.ts";
 
-export type EditorTool = "select" | "road" | "sign" | "delete" | "connect";
+export type EditorTool = "select" | "road" | "sign" | "delete" | "connect" | "split";
 
 type Drag =
   | { kind: "node"; id: string }
@@ -40,6 +40,8 @@ export class Editor {
 
   /** Node highlighted as a snap target while dragging a segment endpoint. */
   snapNode: string | null = null;
+  /** Segment we'd split-and-connect to on release (connect-anywhere). */
+  snapSegment: string | null = null;
 
   private drag: Drag = null;
 
@@ -107,7 +109,18 @@ export class Editor {
       case "connect":
         this.placeLink(world);
         break;
+      case "split":
+        this.splitAt(world);
+        break;
     }
+  }
+
+  /** Split tool: cut the road under the cursor, creating a junction node. */
+  private splitAt(world: Vec2): void {
+    const seg = this.segmentAt(world);
+    if (!seg) return;
+    const node = this.net.splitSegmentAt(seg.id, world);
+    if (node) this.selectedSegment = seg.id;
   }
 
   /** Update hover/cursor state (called on move, and on touch press). */
@@ -145,6 +158,8 @@ export class Editor {
           otherEnd,
         ]);
         this.snapNode = snap?.id ?? null;
+        // Otherwise, offer to split a road under the cursor and connect there.
+        this.snapSegment = this.snapNode ? null : this.segmentAt(world, this.drag.segId)?.id ?? null;
         break;
       }
     }
@@ -156,10 +171,20 @@ export class Editor {
   }
 
   onPointerUp(): void {
-    if (this.drag?.kind === "endpoint" && this.snapNode) {
-      this.net.setSegmentEndpoint(this.drag.segId, this.drag.which, this.snapNode);
+    if (this.drag?.kind === "endpoint") {
+      if (this.snapNode) {
+        this.net.setSegmentEndpoint(this.drag.segId, this.drag.which, this.snapNode);
+      } else if (this.snapSegment) {
+        // Connect-anywhere: split the target road and attach to the new node.
+        const dragged = this.net.nodes.get(this.drag.nodeId);
+        if (dragged) {
+          const mid = this.net.splitSegmentAt(this.snapSegment, dragged.pos);
+          if (mid) this.net.setSegmentEndpoint(this.drag.segId, this.drag.which, mid);
+        }
+      }
     }
     this.snapNode = null;
+    this.snapSegment = null;
     this.drag = null;
   }
 
@@ -167,6 +192,7 @@ export class Editor {
     this.pendingNode = null;
     this.linkFrom = null;
     this.snapNode = null;
+    this.snapSegment = null;
     this.drag = null;
   }
 
@@ -353,10 +379,11 @@ export class Editor {
     return best;
   }
 
-  segmentAt(world: Vec2): Segment | null {
+  segmentAt(world: Vec2, exclude?: string): Segment | null {
     let best: Segment | null = null;
     let bestD = Infinity;
     for (const seg of this.net.segments.values()) {
+      if (seg.id === exclude) continue;
       const a = this.net.nodes.get(seg.startNode);
       const b = this.net.nodes.get(seg.endNode);
       if (!a || !b) continue;

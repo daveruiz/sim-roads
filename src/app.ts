@@ -150,6 +150,7 @@ export class App {
       anchors: connectMode ? this.editor.allAnchors() : [],
       endpointGrips: this.mode === "editor" ? this.editor.endpointGrips() : [],
       snapNode: this.mode === "editor" ? this.editor.snapNode : null,
+      snapSegment: this.mode === "editor" ? this.editor.snapSegment : null,
     };
   }
 
@@ -333,6 +334,7 @@ export class App {
       c: "connect",
       g: "sign",
       d: "delete",
+      s: "split",
     };
     if (key === "delete" || key === "backspace" || key === "x") {
       this.editor.tool = "delete";

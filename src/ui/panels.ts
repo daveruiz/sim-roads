@@ -10,7 +10,12 @@ const TOOLS: { id: EditorTool; label: string; hint: string }[] = [
     id: "select",
     label: "Editar (E)",
     hint:
-      "Arrastra nodos para moverlos y los tiradores naranjas para curvar. Los anillos en los extremos del tramo seleccionado lo desenganchan del cruce; suéltalos sobre otro nodo para reconectar.",
+      "Arrastra nodos para moverlos y los tiradores naranjas para curvar. Los anillos en los extremos del tramo seleccionado lo desenganchan del cruce; suéltalos sobre otro nodo —o sobre otra vía— para conectar (parte la vía automáticamente).",
+  },
+  {
+    id: "split",
+    label: "Dividir (S)",
+    hint: "Clic sobre una vía para partirla en ese punto y crear un cruce.",
   },
   {
     id: "connect",
@@ -22,7 +27,7 @@ const TOOLS: { id: EditorTool; label: string; hint: string }[] = [
   { id: "delete", label: "Borrar (D)", hint: "Clic en un nodo o vía para eliminarlo." },
 ];
 
-const SHORTCUTS = "Atajos: Tab/1/2 modo · V E C G D herramientas · A auto · Espacio play · R reinicia";
+const SHORTCUTS = "Atajos: Tab/1/2 modo · V E C G D S herramientas · A auto · Espacio play · R reinicia";
 
 /** Build and wire the entire control panel. */
 export function buildUI(app: App, root: HTMLElement): void {
