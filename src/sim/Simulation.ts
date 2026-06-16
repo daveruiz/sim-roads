@@ -1,4 +1,5 @@
 import { RoadNetwork } from "../network/RoadNetwork.ts";
+import { Vec2 } from "../core/vec.ts";
 import { Connector, Lane, Conflict, Control } from "../network/types.ts";
 import { Vehicle } from "./Vehicle.ts";
 import { pickVehicleType, VEHICLE_TYPES } from "./vehicleTypes.ts";
@@ -16,6 +17,18 @@ const STOP_ZONE = 3.0; // m — distance within which a STOP is registered
 const GRID_CELL = 12; // m — spatial hash cell size for proximity queries
 const HARD_GAP = 0.5; // m — minimum bumper gap enforced after integration
 
+// --- discretionary lane changes (overtaking + keep-right) ---
+const OVERTAKE_MIN_ROOM = 35; // m of lane left before a junction to start a pass
+const OVERTAKE_SETTLE = 22; // m to travel after a junction before passing (let it settle)
+const OVERTAKE_GAP = 24; // m — a leader closer than this may trigger an overtake
+const OVERTAKE_GAP_AGGR = 40; // …more eagerly for undisciplined drivers
+const SPEED_DEFICIT = 3; // m/s the leader must be slower than desired to pass
+const SPEED_DEFICIT_AGGR = 1.2;
+const OVERTAKE_MIN_LEAD_SPEED = 4; // m/s — don't pass a near-stopped queue (junction)
+const ACCEPT_BACK = 9; // m of clear room required behind on the target lane
+const ACCEPT_BACK_AGGR = 6;
+const ACCEPT_FRONT = 7; // m of clear room required ahead on the target lane
+
 /** Sign priority ranking (higher = more right of way). */
 function priority(c: Control): number {
   return c === "free" ? 2 : c === "yield" ? 1 : 0;
@@ -26,6 +39,12 @@ export interface SimConfig {
   spawnRate: number;
   /** Vehicle type ids allowed to spawn. */
   enabledTypes: Set<string>;
+  /**
+   * Fraction of drivers (0..1) that respect lane discipline: keep right by
+   * default, overtake only when clearly held up, and return promptly. The rest
+   * drive more aggressively (linger in inner lanes, accept smaller gaps).
+   */
+  laneDiscipline: number;
 }
 
 export interface SimStats {
@@ -41,6 +60,7 @@ export class Simulation {
   config: SimConfig = {
     spawnRate: 0.8,
     enabledTypes: new Set(VEHICLE_TYPES.map((t) => t.id)),
+    laneDiscipline: 0.7,
   };
   stats: SimStats = { vehicles: 0, avgSpeed: 0, spawned: 0, arrived: 0 };
 
@@ -62,16 +82,19 @@ export class Simulation {
     this.buildOccupancy();
     this.buildGrid();
 
-    // Phase 1: decide acceleration for every vehicle from a frozen snapshot.
+    // Phase 1: decide discretionary lane changes (overtake / keep-right) from
+    // the frozen snapshot, then acceleration for every vehicle.
+    for (const v of this.vehicles) this.decideLaneChange(v);
     for (const v of this.vehicles) {
       v.accel = decideAcceleration(this.buildContext(v, dt));
     }
 
-    // Phase 2: integrate motion.
+    // Phase 2: integrate motion (longitudinal + lateral lane-change offset).
     for (const v of this.vehicles) {
       const desired = this.desiredSpeed(v);
       v.speed = Math.max(0, Math.min(desired + 2, v.speed + v.accel * dt));
       v.advance(v.speed * dt);
+      v.advanceLateral(dt);
     }
 
     // Phase 3: hard separation safeguard — never let a vehicle overlap the one
@@ -112,6 +135,7 @@ export class Simulation {
       const route = planRoute(lane, sinks);
       if (!route) continue; // no exit reachable from this source
       const v = new Vehicle(type, route);
+      v.disciplined = Math.random() < this.config.laneDiscipline;
       v.speed = Math.min(this.desiredSpeed(v), 8);
       this.vehicles.push(v);
       this.stats.spawned += 1;
@@ -124,12 +148,26 @@ export class Simulation {
   private buildOccupancy(): void {
     this.occ.clear();
     for (const v of this.vehicles) {
-      const id = v.current.id;
-      const arr = this.occ.get(id);
-      if (arr) arr.push(v);
-      else this.occ.set(id, [v]);
+      for (const id of this.physicalLaneIds(v)) {
+        const arr = this.occ.get(id);
+        if (arr) arr.push(v);
+        else this.occ.set(id, [v]);
+      }
     }
     for (const arr of this.occ.values()) arr.sort((a, b) => a.s - b.s);
+  }
+
+  /**
+   * The element(s) a vehicle physically occupies: its plan lane normally, but
+   * BOTH the plan lane and the adjacent lane while mid lane-change. Registering
+   * a changer in both lanes makes car-following and separation see it from
+   * either side, so it can't be driven through during the manoeuvre.
+   */
+  private physicalLaneIds(v: Vehicle): string[] {
+    if (!v.offsetLane || !isLane(v.current)) return [v.current.id];
+    if (v.offset >= 0.85) return [v.offsetLane.id]; // committed to the new lane
+    if (v.offset <= 0.15) return [v.current.id]; // still effectively on the plan lane
+    return [v.current.id, v.offsetLane.id]; // straddling both
   }
 
   /**
@@ -231,20 +269,25 @@ export class Simulation {
 
   /** Nearest vehicle ahead along the route, gap measured bumper-to-bumper. */
   private findLeader(v: Vehicle): LeaderInfo | null {
-    // Same element first.
-    const same = this.occ.get(v.current.id);
-    if (same) {
-      let best: Vehicle | null = null;
+    // Closest leader across every lane the vehicle physically occupies (both,
+    // while mid lane-change), so it yields to traffic in the lane it is entering.
+    let best: LeaderInfo | null = null;
+    for (const id of this.physicalLaneIds(v)) {
+      const same = this.occ.get(id);
+      if (!same) continue;
+      let lead: Vehicle | null = null;
       for (const o of same) {
         if (o === v) continue;
-        if (o.s > v.s && (!best || o.s < best.s)) best = o;
+        if (o.s > v.s && (!lead || o.s < lead.s)) lead = o;
       }
-      if (best) {
+      if (lead) {
         // Raw (possibly negative) gap so the separation safeguard can measure
         // penetration; followAccel clamps internally for the behaviour rules.
-        return { gap: best.s - best.type.length - v.s, speed: best.speed };
+        const gap = lead.s - lead.type.length - v.s;
+        if (!best || gap < best.gap) best = { gap, speed: lead.speed };
       }
     }
+    if (best) return best;
     // Following elements.
     let distToEl = v.current.poly.length - v.s;
     for (let i = v.routeIndex + 1; i < v.route.length; i++) {
@@ -258,6 +301,101 @@ export class Simulation {
       distToEl += el.poly.length;
     }
     return null;
+  }
+
+  /* ----------------------- lane changes ----------------------- */
+
+  /**
+   * Discretionary lane changing. A vehicle on a multi-lane road keeps to its
+   * (rightmost) plan lane by default, slides one lane inward to overtake a slow
+   * leader when there is room and a safe gap, and returns to the plan lane once
+   * past — or before the next junction (a change can never span a junction, and
+   * routes only ever leave from the plan lane). Drivers that respect discipline
+   * overtake only when clearly held up and merge back promptly; the rest are
+   * more eager and linger in the inner lane.
+   */
+  private decideLaneChange(v: Vehicle): void {
+    if (!isLane(v.current)) return;
+    const plan = v.current as Lane;
+    const distToEnd = plan.poly.length - v.s;
+    const returnZone = Math.max(16, v.speed * 1.4);
+    const desired = this.desiredSpeed(v);
+
+    // Already straddling / committed to a change: decide only when to merge back.
+    if (v.offsetLane) {
+      if (v.offsetTarget === 1) {
+        const lead = this.planLeader(v);
+        const stillHeldUp = this.wantsOvertake(v, lead, desired);
+        if (distToEnd < returnZone) v.returnToLane(); // junction ahead: get back
+        else if (v.disciplined && !stillHeldUp) v.returnToLane(); // pass complete
+      }
+      return;
+    }
+
+    // Centred on the plan lane: consider starting an overtake into the inner lane.
+    if (!plan.inner) return; // already the innermost lane (nothing to pass into)
+    if (distToEnd < OVERTAKE_MIN_ROOM) return; // not enough room before the junction
+    if (v.s < OVERTAKE_SETTLE) return; // let traffic settle just after a junction/merge
+    const lead = this.planLeader(v);
+    if (!this.wantsOvertake(v, lead, desired)) return;
+
+    const total = plan.poly.length;
+    const f = total > 0 ? Math.min(v.s / total, 1) : 0;
+    const target = plan.inner.poly.posAt(f * plan.inner.poly.length);
+    if (!this.laneChangeClear(v, plan.poly.dirAt(v.s), target)) return;
+    v.startChange(plan.inner);
+  }
+
+  /** Nearest vehicle ahead on the vehicle's own plan lane (the slow car to pass). */
+  private planLeader(v: Vehicle): LeaderInfo | null {
+    const same = this.occ.get(v.current.id);
+    if (!same) return null;
+    let best: Vehicle | null = null;
+    for (const o of same) {
+      if (o === v) continue;
+      if (o.s > v.s && (!best || o.s < best.s)) best = o;
+    }
+    return best ? { gap: best.s - best.type.length - v.s, speed: best.speed } : null;
+  }
+
+  /** Whether `v` is held up enough behind `lead` to justify overtaking. */
+  private wantsOvertake(v: Vehicle, lead: LeaderInfo | null, desired: number): boolean {
+    if (!lead) return false;
+    if (lead.speed < OVERTAKE_MIN_LEAD_SPEED) return false; // a queue, not a slow cruiser
+    const gapTrig = v.disciplined ? OVERTAKE_GAP : OVERTAKE_GAP_AGGR;
+    const deficit = v.disciplined ? SPEED_DEFICIT : SPEED_DEFICIT_AGGR;
+    return lead.gap >= 0 && lead.gap < gapTrig && lead.speed < desired - deficit;
+  }
+
+  /**
+   * Lateral gap acceptance: is the target lane clear around `target` (the point
+   * the vehicle would occupy)? Scans the spatial hash for any vehicle within a
+   * lane-width laterally and the required clearance fore/aft.
+   */
+  private laneChangeClear(v: Vehicle, dir: Vec2, target: Vec2): boolean {
+    const back = v.disciplined ? ACCEPT_BACK : ACCEPT_BACK_AGGR;
+    const cx = Math.floor(target.x / GRID_CELL);
+    const cy = Math.floor(target.y / GRID_CELL);
+    for (let gx = cx - 2; gx <= cx + 2; gx++) {
+      for (let gy = cy - 2; gy <= cy + 2; gy++) {
+        const cell = this.grid.get(`${gx},${gy}`);
+        if (!cell) continue;
+        for (const w of cell) {
+          if (w === v) continue;
+          const wp = w.pos();
+          const rx = wp.x - target.x;
+          const ry = wp.y - target.y;
+          const lat = -rx * dir.y + ry * dir.x;
+          const half = (v.type.width + w.type.width) / 2 + 0.6;
+          if (Math.abs(lat) > half) continue; // in a different lane laterally
+          const fwd = rx * dir.x + ry * dir.y;
+          if (fwd > -(back + w.type.length) && fwd < ACCEPT_FRONT + v.type.length) {
+            return false; // someone occupies the gap
+          }
+        }
+      }
+    }
+    return true;
   }
 
   /**

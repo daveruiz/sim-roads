@@ -96,6 +96,14 @@ export interface Lane {
   poly: Polyline;
   speedLimit: number;
   outgoing: Connector[]; // connectors leaving the end of this lane
+  /**
+   * Adjacent same-direction lanes on the same segment, for lane changes.
+   * `inner` is one index toward the centerline (the overtaking side);
+   * `outer` is one index toward the kerb (the keep-right side). Undefined at
+   * the edges of the carriageway.
+   */
+  inner?: Lane;
+  outer?: Lane;
 }
 
 /** A short path through a node joining an incoming lane to an outgoing lane. */

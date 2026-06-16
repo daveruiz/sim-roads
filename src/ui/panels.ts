@@ -125,6 +125,11 @@ export function buildUI(app: App, root: HTMLElement): void {
       app.timeScale = v;
     }, (v) => `${v.toFixed(2)}×`)
   );
+  simPanel.appendChild(
+    slider("Disciplina de carril", 0, 1, 0.05, () => app.sim.config.laneDiscipline, (v) => {
+      app.sim.config.laneDiscipline = v;
+    }, (v) => `${Math.round(v * 100)}% respeta`)
+  );
 
   simPanel.appendChild(label("Tipos de vehículo"));
   const typeRow = el("div", "row wrap");

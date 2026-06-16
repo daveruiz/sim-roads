@@ -133,6 +133,24 @@ export function buildGraph(
     }
   }
 
+  // Link each lane to its same-segment, same-direction neighbours so the
+  // simulation can model lane changes (overtaking inward, keeping right
+  // outward). Lanes are sorted by index; index+1 sits one lane toward the kerb.
+  const bySegDir = new Map<string, Lane[]>();
+  for (const lane of lanes) {
+    const key = `${lane.segment}|${lane.dir}`;
+    const arr = bySegDir.get(key);
+    if (arr) arr.push(lane);
+    else bySegDir.set(key, [lane]);
+  }
+  for (const group of bySegDir.values()) {
+    group.sort((a, b) => a.index - b.index);
+    for (let i = 0; i < group.length; i++) {
+      if (i > 0) group[i].inner = group[i - 1];
+      if (i < group.length - 1) group[i].outer = group[i + 1];
+    }
+  }
+
   // Map: "node|segment" approach -> sign control
   const controlOf = new Map<string, Control>();
   for (const s of signs) controlOf.set(`${s.node}|${s.segment}`, s.type);

@@ -18,15 +18,15 @@ function connTime(c: Connector): number {
 }
 
 /**
- * Cost discount a vehicle applies to lanes matching its preferred index, and a
- * tiny per-edge jitter. The preference biases the WHOLE path toward one lane
- * index so traffic spreads evenly across parallel lanes (a per-edge jitter alone
- * averages out over a long ring and everyone funnels into the shorter inner
- * lane). The discount only flips the choice between near-equal parallel lanes.
+ * Routing prefers the outermost (rightmost / kerb-side) lane, modelling the
+ * keep-right default: the planned path hugs the outer lane, and the simulation
+ * layers discretionary overtaking on top by shifting into inner lanes only to
+ * pass and then returning. A small per-edge jitter keeps routes from being
+ * perfectly identical. The discount only flips the choice between near-equal
+ * parallel lanes, never a materially longer detour.
  */
-const LANE_PREF_DISCOUNT = 0.8;
+const OUTER_LANE_DISCOUNT = 0.8;
 const ROUTE_JITTER = 0.06;
-const MAX_PREF_LANES = 3;
 
 /**
  * Plan a route from `start` to a randomly chosen reachable sink (exit).
@@ -42,9 +42,6 @@ export function planRoute(
   const prev = new Map<string, { conn: Connector; from: Lane }>();
   const laneById = new Map<string, Lane>([[start.id, start]]);
 
-  // This vehicle's preferred lane index for the whole trip.
-  const lanePref = Math.floor(rng() * MAX_PREF_LANES);
-
   distTo.set(start.id, laneTime(start));
   const heap = new MinHeap<Lane>();
   heap.push(start, distTo.get(start.id)!);
@@ -55,7 +52,8 @@ export function planRoute(
     for (const conn of lane.outgoing) {
       const next = conn.to;
       laneById.set(next.id, next);
-      const pref = next.index === lanePref ? LANE_PREF_DISCOUNT : 1;
+      // Rightmost lanes (no outer neighbour) are cheaper: keep-right default.
+      const pref = next.outer ? 1 : OUTER_LANE_DISCOUNT;
       const jitter = 1 + ROUTE_JITTER * (rng() - 0.5);
       const cand = key + (connTime(conn) + laneTime(next) * pref) * jitter;
       if (cand < (distTo.get(next.id) ?? Infinity)) {
