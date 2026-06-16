@@ -18,14 +18,19 @@ function connTime(c: Connector): number {
 }
 
 /**
- * Routing prefers the outermost (rightmost / kerb-side) lane, modelling the
- * keep-right default: the planned path hugs the outer lane, and the simulation
- * layers discretionary overtaking on top by shifting into inner lanes only to
- * pass and then returning. A small per-edge jitter keeps routes from being
- * perfectly identical. The discount only flips the choice between near-equal
- * parallel lanes, never a materially longer detour.
+ * Lane choice is biased by `laneStyle` (0..1). At 0 the outer (kerb) lane is
+ * cheapest, so routes hug the right and only pop inside to pass — keep-right.
+ * As it rises, inner lanes get cheaper, so through traffic dives toward the
+ * centre and eases back out lane-by-lane only as it nears its exit (exits
+ * attach to the outer lane, and a route may shift just one lane per junction).
+ * A per-change penalty stops needless weaving; short trips that exit soon never
+ * recoup it, so they stay outer — exactly the real-world rule.
  */
-const OUTER_LANE_DISCOUNT = 0.8;
+const KERB_BIAS = 0.15; // keep-right pull at style 0 (inner lanes cost more)
+const STYLE_SLOPE = 0.7; // how fast the bias swings toward inner as style rises
+const INNER_MAX = 0.22; // cap on the inner pull, so even style 1 stays moderate
+//                         (full inner saturates the centre and jams the exits)
+const CHANGE_PENALTY = 1.2; // s added for traversing a lane-change connector
 const ROUTE_JITTER = 0.06;
 
 /**
@@ -36,8 +41,12 @@ const ROUTE_JITTER = 0.06;
 export function planRoute(
   start: Lane,
   sinks: Set<string>,
+  laneStyle = 0,
   rng: () => number = Math.random
 ): PathEl[] | null {
+  // Per-metre lane-cost bias by interiorness: positive favours the kerb lane,
+  // negative favours inner lanes. Swings from +KERB_BIAS down to -INNER_MAX.
+  const interiorFactor = Math.max(-INNER_MAX, KERB_BIAS - STYLE_SLOPE * laneStyle);
   const distTo = new Map<string, number>(); // cost to the END of each lane
   const prev = new Map<string, { conn: Connector; from: Lane }>();
   const laneById = new Map<string, Lane>([[start.id, start]]);
@@ -52,10 +61,10 @@ export function planRoute(
     for (const conn of lane.outgoing) {
       const next = conn.to;
       laneById.set(next.id, next);
-      // Rightmost lanes (no outer neighbour) are cheaper: keep-right default.
-      const pref = next.outer ? 1 : OUTER_LANE_DISCOUNT;
+      const pref = 1 + interiorFactor * next.interiorness;
+      const change = conn.kind === "change" ? CHANGE_PENALTY : 0;
       const jitter = 1 + ROUTE_JITTER * (rng() - 0.5);
-      const cand = key + (connTime(conn) + laneTime(next) * pref) * jitter;
+      const cand = key + (connTime(conn) + change + laneTime(next) * pref) * jitter;
       if (cand < (distTo.get(next.id) ?? Infinity)) {
         distTo.set(next.id, cand);
         prev.set(next.id, { conn, from: lane });

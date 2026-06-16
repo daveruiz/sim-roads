@@ -40,11 +40,12 @@ export interface SimConfig {
   /** Vehicle type ids allowed to spawn. */
   enabledTypes: Set<string>;
   /**
-   * Fraction of drivers (0..1) that respect lane discipline: keep right by
-   * default, overtake only when clearly held up, and return promptly. The rest
-   * drive more aggressively (linger in inner lanes, accept smaller gaps).
+   * Lane-use style (0..1). At 0 traffic hugs the outer (kerb) lane — always
+   * keep right. As it rises, through traffic dives toward inner lanes when it
+   * still has far to go and eases back out toward its exit (notably inside
+   * roundabouts), leaving the outer lane freer for entering/exiting vehicles.
    */
-  laneDiscipline: number;
+  laneStyle: number;
 }
 
 export interface SimStats {
@@ -60,7 +61,7 @@ export class Simulation {
   config: SimConfig = {
     spawnRate: 0.8,
     enabledTypes: new Set(VEHICLE_TYPES.map((t) => t.id)),
-    laneDiscipline: 0.7,
+    laneStyle: 0.5,
   };
   stats: SimStats = { vehicles: 0, avgSpeed: 0, spawned: 0, arrived: 0 };
 
@@ -132,10 +133,10 @@ export class Simulation {
       const onLane = this.occ.get(lane.id);
       const blocked = onLane?.some((v) => v.s < clearance);
       if (blocked) continue;
-      const route = planRoute(lane, sinks);
+      const route = planRoute(lane, sinks, this.config.laneStyle);
       if (!route) continue; // no exit reachable from this source
       const v = new Vehicle(type, route);
-      v.disciplined = Math.random() < this.config.laneDiscipline;
+      v.disciplined = Math.random() < 0.7; // overtaking discipline (independent of style)
       v.speed = Math.min(this.desiredSpeed(v), 8);
       this.vehicles.push(v);
       this.stats.spawned += 1;

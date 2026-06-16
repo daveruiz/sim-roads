@@ -55,7 +55,7 @@ function connectApproaches(
   node: string,
   inLanes: Lane[],
   outLanes: Lane[],
-  add: (node: string, inLane: Lane, outLane: Lane) => void
+  add: (node: string, inLane: Lane, outLane: Lane, kind?: "through" | "change") => void
 ): void {
   const inK = orderFromKerb(inLanes); // [0] = outer (kerb), last = inner
   const outK = orderFromKerb(outLanes);
@@ -75,13 +75,20 @@ function connectApproaches(
   const fi = inK.length;
   const fo = outK.length;
   const seen = new Set<string>();
+  const link = (a: Lane, b: Lane, kind: "through" | "change") => {
+    const key = `${a.id}|${b.id}`;
+    if (a === b || seen.has(key)) return;
+    seen.add(key);
+    add(node, a, b, kind);
+  };
   for (let k = 0; k < Math.max(fi, fo); k++) {
     const a = inK[Math.min(k, fi - 1)];
     const b = outK[Math.min(k, fo - 1)];
-    const key = `${a.id}|${b.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    add(node, a, b);
+    link(a, b, "through");
+    // One-lane shifts through the node, so a route can drift in/out across
+    // junctions (e.g. dive into a roundabout, then ease back out to the exit).
+    if (b.outer) link(a, b.outer, "change");
+    if (b.inner) link(a, b.inner, "change");
   }
 }
 
@@ -166,12 +173,16 @@ export function buildGraph(
   for (const group of bySegDir.values()) {
     group.sort((a, b) => a.index - b.index);
     const flip = segments.get(group[0].segment)?.laneFlip ?? false;
+    const last = group.length - 1;
     for (let i = 0; i < group.length; i++) {
       const lower = group[i - 1];
       const higher = group[i + 1];
       // toward-kerb = lower index when flipped, higher index otherwise
       group[i].outer = flip ? lower : higher;
       group[i].inner = flip ? higher : lower;
+      // 0 at the kerb, 1 at the innermost lane
+      const kerbRank = flip ? i : last - i;
+      group[i].interiorness = last > 0 ? kerbRank / last : 0;
     }
   }
 
@@ -188,9 +199,14 @@ export function buildGraph(
   }
 
   const connectors: Connector[] = [];
-  const addConnector = (node: string, inLane: Lane, outLane: Lane): void => {
+  const addConnector = (
+    node: string,
+    inLane: Lane,
+    outLane: Lane,
+    kind: "through" | "change" = "through"
+  ): void => {
     const control = controlOf.get(`${node}|${inLane.segment}`) ?? "free";
-    const conn = makeConnector(node, inLane, outLane, control);
+    const conn = makeConnector(node, inLane, outLane, control, kind);
     if (!conn) return;
     inLane.outgoing.push(conn);
     connectors.push(conn);
@@ -276,6 +292,7 @@ function makeLane(
     poly: new Polyline(pts),
     speedLimit: seg.speedLimit,
     outgoing: [],
+    interiorness: 0,
   };
 }
 
@@ -290,7 +307,8 @@ function makeConnector(
   node: string,
   inLane: Lane,
   outLane: Lane,
-  control: Control
+  control: Control,
+  kind: "through" | "change" = "through"
 ): Connector | null {
   const p0 = inLane.poly.posAt(inLane.poly.length);
   const p3 = outLane.poly.posAt(0);
@@ -318,6 +336,7 @@ function makeConnector(
     poly: new Polyline(points),
     control,
     turnAngle,
+    kind,
     conflicts: [],
   };
 }
@@ -361,10 +380,15 @@ function computeConflicts(
           // Merging into the same lane: the conflict is the merge point itself
           // (the start of the shared destination lane). This lets a yielding
           // approach give way to circulating/through traffic — essential for
-          // roundabouts and on-ramps.
+          // roundabouts, on-ramps and lane changes giving way to their target.
           addConflict(a, b, a.poly.length, b.poly.length, a.to.poly.posAt(0));
           continue;
         }
+        // A lane-change connector only gives way where it merges (handled
+        // above); holding it at every geometric crossing would gridlock busy
+        // nodes (e.g. roundabouts) for no safety gain — car-following and the
+        // proximity rule cover the rest.
+        if (a.kind === "change" || b.kind === "change") continue;
         const hit = polylineCross(a.poly, b.poly);
         if (hit) addConflict(a, b, hit.sA, hit.sB, hit.point);
       }

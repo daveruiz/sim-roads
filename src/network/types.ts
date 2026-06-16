@@ -98,12 +98,13 @@ export interface Lane {
   outgoing: Connector[]; // connectors leaving the end of this lane
   /**
    * Adjacent same-direction lanes on the same segment, for lane changes.
-   * `inner` is one index toward the centerline (the overtaking side);
-   * `outer` is one index toward the kerb (the keep-right side). Undefined at
-   * the edges of the carriageway.
+   * `inner` is one lane toward the centre (the overtaking side); `outer` is one
+   * lane toward the kerb (the keep-right side). Undefined at the edges.
    */
   inner?: Lane;
   outer?: Lane;
+  /** 0 = outermost (kerb) lane, 1 = innermost; used to bias lane choice. */
+  interiorness: number;
 }
 
 /** A short path through a node joining an incoming lane to an outgoing lane. */
@@ -115,6 +116,13 @@ export interface Connector {
   poly: Polyline;
   control: Control; // right-of-way rule for vehicles entering this connector
   turnAngle: number; // signed turn angle in radians (left negative / right positive)
+  /**
+   * "through" = a normal movement (straight or turn); "change" = a one-lane
+   * shift to an adjacent parallel lane while continuing roughly straight, so a
+   * route can move between lanes (e.g. dive inside a roundabout, then drift out
+   * to the exit). Change connectors carry a routing penalty.
+   */
+  kind: "through" | "change";
   /** Conflict points with other connectors at the same node. */
   conflicts: Conflict[];
 }

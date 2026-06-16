@@ -40,7 +40,10 @@ function run(preset: any, disc: number, seed: number) {
     const net = preset.build();
     const sim = new Simulation(net);
     sim.config.spawnRate = 1.2;
-    sim.config.laneDiscipline = disc;
+    sim.config.laneStyle = disc;
+    const ringSegs = new Set<string>();
+    for (const s of net.segments.values()) if ((s as any).laneFlip) ringSegs.add(s.id);
+    let ringInner = 0, ringTotal = 0;
     let overlapTicks = 0, sampleTicks = 0, overtakeSeen = 0, offLaneTicks = 0, vehTicks = 0, arrived = 0;
     const seen = new Set<string>();
     for (let i = 0; i < 4000; i++) {
@@ -52,6 +55,8 @@ function run(preset: any, disc: number, seed: number) {
           vehTicks++;
           if ((v as any).offsetLane) offLaneTicks++;
           if ((v as any).offsetLane && !seen.has(v.id)) { seen.add(v.id); overtakeSeen++; }
+          const cur: any = v.current;
+          if (cur && ringSegs.has(cur.segment)) { ringTotal++; if (cur.interiorness > 0) ringInner++; }
         }
         for (let a = 0; a < vs.length; a++)
           for (let b = a + 1; b < vs.length; b++)
@@ -59,7 +64,13 @@ function run(preset: any, disc: number, seed: number) {
       }
     }
     arrived = sim.stats.arrived;
-    return { overlap: overlapTicks / sampleTicks, overtakeSeen, offPct: (100 * offLaneTicks) / Math.max(vehTicks, 1), arrived };
+    return {
+      overlap: overlapTicks / sampleTicks,
+      overtakeSeen,
+      offPct: (100 * offLaneTicks) / Math.max(vehTicks, 1),
+      ringInnerPct: ringTotal ? (100 * ringInner) / ringTotal : -1,
+      arrived,
+    };
   } finally {
     (Math as any).random = orig;
   }
@@ -68,15 +79,16 @@ function run(preset: any, disc: number, seed: number) {
 for (const disc of [1, 0.5, 0]) {
   console.log(`\n=== laneDiscipline = ${disc} (mean of ${SEEDS.length} seeds) ===`);
   for (const preset of PRESETS) {
-    let ov = 0, ot = 0, off = 0, arr = 0;
+    let ov = 0, ot = 0, off = 0, arr = 0, ring = 0;
     for (const s of SEEDS) {
       const r = run(preset, disc, s);
-      ov += r.overlap; ot += r.overtakeSeen; off += r.offPct; arr += r.arrived;
+      ov += r.overlap; ot += r.overtakeSeen; off += r.offPct; arr += r.arrived; ring += r.ringInnerPct;
     }
     const n = SEEDS.length;
+    const ringStr = ring / n >= 0 ? ` ringInner%=${(ring / n).toFixed(0)}` : "";
     console.log(
       `${preset.label.padEnd(26)} overlaps/tick=${(ov / n).toFixed(2)} ` +
-        `overtakes=${(ot / n).toFixed(0)} offlane%=${(off / n).toFixed(1)} arrived=${(arr / n).toFixed(0)}`
+        `overtakes=${(ot / n).toFixed(0)} arrived=${(arr / n).toFixed(0)}${ringStr}`
     );
   }
 }
