@@ -29,10 +29,27 @@ function groupBySegment(lanes: Lane[]): Map<string, Lane[]> {
 }
 
 /**
+ * Order a single approach's lanes from the kerb (outer / keep-right side)
+ * inward, following the `outer`/`inner` adjacency so it is correct for both
+ * normal roads and laneFlip rings. ordered[0] is the outer (kerb) lane.
+ */
+function orderFromKerb(lanes: Lane[]): Lane[] {
+  let cur = lanes.find((l) => !l.outer) ?? lanes[0]; // the kerb lane
+  const out: Lane[] = [];
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    out.push(cur);
+    seen.add(cur.id);
+    cur = cur.inner as Lane;
+  }
+  return out;
+}
+
+/**
  * Connect an incoming approach to an outgoing approach following the Option-A
  * rule: a roughly straight movement preserves lanes (paired from the outer
  * edge, so a multi-lane road keeps all its lanes through the node); a turn or
- * merge joins only the outer (rightmost) lane of each.
+ * merge joins only the outer (kerb-side) lane of each.
  */
 function connectApproaches(
   node: string,
@@ -40,10 +57,10 @@ function connectApproaches(
   outLanes: Lane[],
   add: (node: string, inLane: Lane, outLane: Lane) => void
 ): void {
-  const inS = [...inLanes].sort((a, b) => a.index - b.index); // 0 = inner, last = outer
-  const outS = [...outLanes].sort((a, b) => a.index - b.index);
-  const inOuter = inS[inS.length - 1];
-  const outOuter = outS[outS.length - 1];
+  const inK = orderFromKerb(inLanes); // [0] = outer (kerb), last = inner
+  const outK = orderFromKerb(outLanes);
+  const inOuter = inK[0];
+  const outOuter = outK[0];
   if (!inOuter || !outOuter) return;
 
   const angle = Math.abs(
@@ -55,12 +72,12 @@ function connectApproaches(
   }
   // Straight: pair lanes from the outer edge inward (clamp on count mismatch so
   // a lane drop merges and a lane gain stays reachable). Dedupe clamped repeats.
-  const fi = inS.length;
-  const fo = outS.length;
+  const fi = inK.length;
+  const fo = outK.length;
   const seen = new Set<string>();
   for (let k = 0; k < Math.max(fi, fo); k++) {
-    const a = inS[Math.max(0, fi - 1 - k)];
-    const b = outS[Math.max(0, fo - 1 - k)];
+    const a = inK[Math.min(k, fi - 1)];
+    const b = outK[Math.min(k, fo - 1)];
     const key = `${a.id}|${b.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -134,8 +151,11 @@ export function buildGraph(
   }
 
   // Link each lane to its same-segment, same-direction neighbours so the
-  // simulation can model lane changes (overtaking inward, keeping right
-  // outward). Lanes are sorted by index; index+1 sits one lane toward the kerb.
+  // simulation can model lane changes. `outer` always points toward the kerb
+  // (the keep-right side), `inner` toward the centre/overtaking side. For a
+  // normal road the kerb is the higher index; for a laneFlip ring (lanes offset
+  // to the inside of the circle) the kerb is the LOWER index, so the mapping is
+  // reversed — this is what keeps roundabout traffic on the outer lane.
   const bySegDir = new Map<string, Lane[]>();
   for (const lane of lanes) {
     const key = `${lane.segment}|${lane.dir}`;
@@ -145,9 +165,13 @@ export function buildGraph(
   }
   for (const group of bySegDir.values()) {
     group.sort((a, b) => a.index - b.index);
+    const flip = segments.get(group[0].segment)?.laneFlip ?? false;
     for (let i = 0; i < group.length; i++) {
-      if (i > 0) group[i].inner = group[i - 1];
-      if (i < group.length - 1) group[i].outer = group[i + 1];
+      const lower = group[i - 1];
+      const higher = group[i + 1];
+      // toward-kerb = lower index when flipped, higher index otherwise
+      group[i].outer = flip ? lower : higher;
+      group[i].inner = flip ? higher : lower;
     }
   }
 
