@@ -34,6 +34,17 @@ export class Camera {
     this.y -= dyScreen / this.zoom;
   }
 
+  /** Centre and zoom so the world rectangle [min,max] fits the viewport. */
+  fit(min: Vec2, max: Vec2): void {
+    this.x = (min.x + max.x) / 2;
+    this.y = (min.y + max.y) / 2;
+    const w = Math.max(1, max.x - min.x);
+    const h = Math.max(1, max.y - min.y);
+    const zx = (this.canvas.clientWidth * 0.9) / w;
+    const zy = (this.canvas.clientHeight * 0.9) / h;
+    this.zoom = Math.max(0.5, Math.min(40, Math.min(zx, zy)));
+  }
+
   zoomAt(screen: Vec2, factor: number): void {
     const before = this.screenToWorld(screen);
     this.zoom = Math.max(0.5, Math.min(40, this.zoom * factor));

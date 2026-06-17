@@ -94,6 +94,35 @@ export function buildUI(app: App, root: HTMLElement): void {
   );
   editorPanel.appendChild(fileRow);
 
+  const osmRow = el("div", "row wrap");
+  const osmBtn = button("🗺️ Importar zona real (OSM)", async () => {
+    // Default sample: a slice of Barcelona's Eixample (grid with chamfered corners).
+    const input = prompt(
+      "Zona a importar desde OpenStreetMap\n(sur,oeste,norte,este en lat/lon).\nÁreas pequeñas (≈1 km) van mejor.",
+      "41.3840,2.1620,41.3905,2.1740"
+    );
+    if (!input) return;
+    const bbox = input.split(",").map((s) => parseFloat(s.trim()));
+    if (bbox.length !== 4 || bbox.some((n) => !Number.isFinite(n))) {
+      alert("Coordenadas no válidas. Formato: sur,oeste,norte,este");
+      return;
+    }
+    osmBtn.disabled = true;
+    osmBtn.textContent = "Descargando…";
+    try {
+      const ok = await app.importOSM(bbox as [number, number, number, number]);
+      if (!ok) alert("No se encontraron vías de tráfico en esa zona.");
+      else app.onChange();
+    } catch (e) {
+      alert("No se pudo descargar de Overpass (zona demasiado grande, límite de uso o sin conexión).");
+    } finally {
+      osmBtn.disabled = false;
+      osmBtn.textContent = "🗺️ Importar zona real (OSM)";
+    }
+  });
+  osmRow.append(osmBtn);
+  editorPanel.appendChild(osmRow);
+
   const segProps = el("div", "section");
   editorPanel.appendChild(segProps);
 

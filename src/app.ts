@@ -5,6 +5,7 @@ import { Camera } from "./render/Camera.ts";
 import { Renderer, RenderOptions } from "./render/Renderer.ts";
 import { Vec2 } from "./core/vec.ts";
 import { PRESETS } from "./network/presets.ts";
+import { osmToNetwork, overpassUrl } from "./network/osm.ts";
 
 export type Mode = "editor" | "sim";
 
@@ -112,6 +113,38 @@ export class App {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Import a real street layout from OpenStreetMap for a lat/lon bounding box,
+   * fetched live from the Overpass API (runs in the user's browser, which is not
+   * subject to any server egress policy). Returns false if the area had no
+   * drivable roads. Throws on network/HTTP errors so the caller can report them.
+   */
+  async importOSM(bbox: [number, number, number, number]): Promise<boolean> {
+    const res = await fetch(overpassUrl(bbox));
+    if (!res.ok) throw new Error(`Overpass ${res.status}`);
+    const data = await res.json();
+    const ser = osmToNetwork(data);
+    if (!ser.segments.length) return false;
+    this.loadNetwork(RoadNetwork.deserialize(ser));
+    this.fitView();
+    return true;
+  }
+
+  /** Centre and zoom the camera so the whole current network is in view. */
+  fitView(): void {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const n of this.net.nodes.values()) {
+      minX = Math.min(minX, n.pos.x);
+      minY = Math.min(minY, n.pos.y);
+      maxX = Math.max(maxX, n.pos.x);
+      maxY = Math.max(maxY, n.pos.y);
+    }
+    if (minX <= maxX) this.camera.fit({ x: minX, y: minY }, { x: maxX, y: maxY });
   }
 
   /* --------------------------- main loop -------------------------- */

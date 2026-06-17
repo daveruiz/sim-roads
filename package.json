@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --outfile=.smoke.mjs && node .smoke.mjs",
-    "metrics": "esbuild scripts/metrics.ts --bundle --platform=node --format=esm --outfile=.metrics.mjs && node .metrics.mjs"
+    "metrics": "esbuild scripts/metrics.ts --bundle --platform=node --format=esm --outfile=.metrics.mjs && node .metrics.mjs",
+    "osm": "esbuild scripts/osm-import.ts --bundle --platform=node --format=esm --outfile=.osm.mjs && node .osm.mjs"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
