@@ -40,7 +40,7 @@ function run(preset: any, disc: number, seed: number) {
     const net = preset.build();
     const sim = new Simulation(net);
     sim.config.spawnRate = 1.2;
-    sim.config.laneStyle = disc;
+    sim.config.freedom = disc;
     const ringSegs = new Set<string>();
     for (const s of net.segments.values()) if ((s as any).laneFlip) ringSegs.add(s.id);
     let ringInner = 0, ringTotal = 0;
@@ -77,7 +77,7 @@ function run(preset: any, disc: number, seed: number) {
 }
 
 for (const disc of [1, 0.5, 0]) {
-  console.log(`\n=== laneDiscipline = ${disc} (mean of ${SEEDS.length} seeds) ===`);
+  console.log(`\n=== freedom = ${disc} (mean of ${SEEDS.length} seeds) ===`);
   for (const preset of PRESETS) {
     let ov = 0, ot = 0, off = 0, arr = 0, ring = 0;
     for (const s of SEEDS) {

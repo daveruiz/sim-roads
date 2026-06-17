@@ -34,8 +34,12 @@ export class Vehicle {
   offset = 0; // 0 = on plan lane, 1 = fully on offsetLane
   offsetTarget = 0; // value `offset` is animating toward
   lateralVel = 0; // d(offset)/dt this tick (signed), for heading/yaw
-  /** Whether this driver respects lane discipline (keep right, return promptly). */
-  disciplined = true;
+  /** Destination lane (sink) id, so a deviation can re-plan to the same exit. */
+  dest = "";
+  /** How freely this driver deviates around obstacles (0 = never, 1 = readily). */
+  freedom = 0;
+  /** Route to splice in when the current deviation commits to its new lane. */
+  pendingRoute: PathEl[] | null = null;
 
   constructor(public type: VehicleType, route: PathEl[]) {
     this.route = route;
@@ -82,6 +86,7 @@ export class Vehicle {
   /** Begin returning to the plan lane (keeps the offset lane until centred). */
   returnToLane(): void {
     this.offsetTarget = 0;
+    this.pendingRoute = null;
   }
 
   /** Advance the lateral offset toward its target; clears it once centred. */
@@ -124,6 +129,7 @@ export class Vehicle {
       this.offset = 0;
       this.offsetTarget = 0;
       this.lateralVel = 0;
+      this.pendingRoute = null;
       // Drop already-passed elements to keep the array small on long routes.
       if (this.routeIndex > 32) {
         this.route = this.route.slice(this.routeIndex);

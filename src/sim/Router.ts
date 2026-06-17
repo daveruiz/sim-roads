@@ -18,35 +18,24 @@ function connTime(c: Connector): number {
 }
 
 /**
- * Lane choice is biased by `laneStyle` (0..1). At 0 the outer (kerb) lane is
- * cheapest, so routes hug the right and only pop inside to pass — keep-right.
- * As it rises, inner lanes get cheaper, so through traffic dives toward the
- * centre and eases back out lane-by-lane only as it nears its exit (exits
- * attach to the outer lane, and a route may shift just one lane per junction).
- * A per-change penalty stops needless weaving; short trips that exit soon never
- * recoup it, so they stay outer — exactly the real-world rule.
+ * Routes hug the outer (kerb) lane by default — keep-right — while a small
+ * per-change penalty stops the plan from weaving between lanes for no reason.
+ * Actually getting around obstacles is left to the simulation's discretionary
+ * deviation (the "freedom" behaviour), which re-plans to the same destination.
  */
-const KERB_BIAS = 0.15; // keep-right pull at style 0 (inner lanes cost more)
-const STYLE_SLOPE = 0.7; // how fast the bias swings toward inner as style rises
-const INNER_MAX = 0.22; // cap on the inner pull, so even style 1 stays moderate
-//                         (full inner saturates the centre and jams the exits)
+const OUTER_DISCOUNT = 0.85; // rightmost (kerb) lane slightly cheaper
 const CHANGE_PENALTY = 1.2; // s added for traversing a lane-change connector
 const ROUTE_JITTER = 0.06;
 
-/**
- * Plan a route from `start` to a randomly chosen reachable sink (exit).
- * Returns the interleaved [lane, connector, lane, …] path, or null when no exit
- * is reachable from the start lane.
- */
-export function planRoute(
+/** Dijkstra over the lane graph from `start`; returns the search state. */
+function dijkstra(
   start: Lane,
-  sinks: Set<string>,
-  laneStyle = 0,
-  rng: () => number = Math.random
-): PathEl[] | null {
-  // Per-metre lane-cost bias by interiorness: positive favours the kerb lane,
-  // negative favours inner lanes. Swings from +KERB_BIAS down to -INNER_MAX.
-  const interiorFactor = Math.max(-INNER_MAX, KERB_BIAS - STYLE_SLOPE * laneStyle);
+  rng: () => number
+): {
+  distTo: Map<string, number>;
+  prev: Map<string, { conn: Connector; from: Lane }>;
+  laneById: Map<string, Lane>;
+} {
   const distTo = new Map<string, number>(); // cost to the END of each lane
   const prev = new Map<string, { conn: Connector; from: Lane }>();
   const laneById = new Map<string, Lane>([[start.id, start]]);
@@ -61,7 +50,7 @@ export function planRoute(
     for (const conn of lane.outgoing) {
       const next = conn.to;
       laneById.set(next.id, next);
-      const pref = 1 + interiorFactor * next.interiorness;
+      const pref = next.outer ? 1 : OUTER_DISCOUNT; // kerb lane (no outer) cheaper
       const change = conn.kind === "change" ? CHANGE_PENALTY : 0;
       const jitter = 1 + ROUTE_JITTER * (rng() - 0.5);
       const cand = key + (connTime(conn) + change + laneTime(next) * pref) * jitter;
@@ -72,6 +61,20 @@ export function planRoute(
       }
     }
   }
+  return { distTo, prev, laneById };
+}
+
+/**
+ * Plan a route from `start` to a randomly chosen reachable sink (exit).
+ * Returns the interleaved [lane, connector, lane, …] path, or null when no exit
+ * is reachable from the start lane.
+ */
+export function planRoute(
+  start: Lane,
+  sinks: Set<string>,
+  rng: () => number = Math.random
+): PathEl[] | null {
+  const { distTo, prev, laneById } = dijkstra(start, rng);
 
   // Reachable exits, excluding the start lane itself.
   const reachable: string[] = [];
@@ -84,6 +87,22 @@ export function planRoute(
   }
 
   const destId = reachable[(rng() * reachable.length) | 0];
+  return reconstruct(start, destId, laneById, prev);
+}
+
+/**
+ * Re-plan from `start` to a specific destination lane (used when a vehicle
+ * deviates onto another lane to get around an obstacle and must continue to its
+ * original exit). Returns null if the destination is no longer reachable.
+ */
+export function planRouteTo(
+  start: Lane,
+  destId: string,
+  rng: () => number = Math.random
+): PathEl[] | null {
+  if (destId === start.id) return [start];
+  const { distTo, prev, laneById } = dijkstra(start, rng);
+  if (!distTo.has(destId)) return null;
   return reconstruct(start, destId, laneById, prev);
 }
 

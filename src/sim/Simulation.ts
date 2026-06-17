@@ -3,7 +3,7 @@ import { Vec2 } from "../core/vec.ts";
 import { Connector, Lane, Conflict, Control } from "../network/types.ts";
 import { Vehicle } from "./Vehicle.ts";
 import { pickVehicleType, VEHICLE_TYPES } from "./vehicleTypes.ts";
-import { planRoute } from "./Router.ts";
+import { planRoute, planRouteTo } from "./Router.ts";
 import { decideAcceleration } from "./rules/index.ts";
 import { RuleContext, LeaderInfo } from "./rules/types.ts";
 import { PathEl, isLane, isConnector } from "./path.ts";
@@ -17,17 +17,15 @@ const STOP_ZONE = 3.0; // m — distance within which a STOP is registered
 const GRID_CELL = 12; // m — spatial hash cell size for proximity queries
 const HARD_GAP = 0.5; // m — minimum bumper gap enforced after integration
 
-// --- discretionary lane changes (overtaking + keep-right) ---
-const OVERTAKE_MIN_ROOM = 35; // m of lane left before a junction to start a pass
-const OVERTAKE_SETTLE = 22; // m to travel after a junction before passing (let it settle)
-const OVERTAKE_GAP = 24; // m — a leader closer than this may trigger an overtake
-const OVERTAKE_GAP_AGGR = 40; // …more eagerly for undisciplined drivers
-const SPEED_DEFICIT = 3; // m/s the leader must be slower than desired to pass
-const SPEED_DEFICIT_AGGR = 1.2;
-const OVERTAKE_MIN_LEAD_SPEED = 4; // m/s — don't pass a near-stopped queue (junction)
-const ACCEPT_BACK = 9; // m of clear room required behind on the target lane
-const ACCEPT_BACK_AGGR = 6;
-const ACCEPT_FRONT = 7; // m of clear room required ahead on the target lane
+// --- discretionary deviation (freedom to go around obstacles) ---
+const DEVIATE_MIN_ROOM = 14; // m of lane left before a junction to start a deviation
+const DEVIATE_SETTLE = 8; // m to travel after a junction before deviating
+const DEVIATE_TRIGGER_GAP = 30; // m — only consider obstacles closer than this
+const DEVIATE_SPEED_DEFICIT = 4; // m/s the obstacle must be slower than us to go around
+const DEVIATE_RATE = 0.6; // attempts/s per unit freedom when blocked
+const ACCEPT_BACK = 8; // m of clear room required behind on the target lane (at freedom 0)
+const ACCEPT_BACK_MIN = 3.5; // …shrinks toward this as freedom rises
+const ACCEPT_FRONT = 6; // m of clear room required ahead on the target lane
 
 /** Sign priority ranking (higher = more right of way). */
 function priority(c: Control): number {
@@ -40,12 +38,14 @@ export interface SimConfig {
   /** Vehicle type ids allowed to spawn. */
   enabledTypes: Set<string>;
   /**
-   * Lane-use style (0..1). At 0 traffic hugs the outer (kerb) lane — always
-   * keep right. As it rises, through traffic dives toward inner lanes when it
-   * still has far to go and eases back out toward its exit (notably inside
-   * roundabouts), leaving the outer lane freer for entering/exiting vehicles.
+   * Driver freedom (0..1). At 0 vehicles strictly follow their lane and queue
+   * behind anything — never deviating. As it rises they are increasingly
+   * willing to pull around an obstacle blocking their path (a stopped or much
+   * slower vehicle) into a free adjacent lane and carry on toward their exit,
+   * always in the direction of travel. Higher freedom = larger deviations and
+   * smaller gaps accepted, for more fluid (if less orderly) traffic.
    */
-  laneStyle: number;
+  freedom: number;
 }
 
 export interface SimStats {
@@ -61,7 +61,7 @@ export class Simulation {
   config: SimConfig = {
     spawnRate: 0.8,
     enabledTypes: new Set(VEHICLE_TYPES.map((t) => t.id)),
-    laneStyle: 0.5,
+    freedom: 0.5,
   };
   stats: SimStats = { vehicles: 0, avgSpeed: 0, spawned: 0, arrived: 0 };
 
@@ -83,9 +83,9 @@ export class Simulation {
     this.buildOccupancy();
     this.buildGrid();
 
-    // Phase 1: decide discretionary lane changes (overtake / keep-right) from
+    // Phase 1: decide discretionary deviations (going around obstacles) from
     // the frozen snapshot, then acceleration for every vehicle.
-    for (const v of this.vehicles) this.decideLaneChange(v);
+    for (const v of this.vehicles) this.decideDeviation(v, dt);
     for (const v of this.vehicles) {
       v.accel = decideAcceleration(this.buildContext(v, dt));
     }
@@ -133,10 +133,13 @@ export class Simulation {
       const onLane = this.occ.get(lane.id);
       const blocked = onLane?.some((v) => v.s < clearance);
       if (blocked) continue;
-      const route = planRoute(lane, sinks, this.config.laneStyle);
+      const route = planRoute(lane, sinks);
       if (!route) continue; // no exit reachable from this source
       const v = new Vehicle(type, route);
-      v.disciplined = Math.random() < 0.7; // overtaking discipline (independent of style)
+      v.dest = route[route.length - 1].id;
+      // Each driver's freedom is spread around the configured mean so a mix of
+      // strict and flexible drivers share the road.
+      v.freedom = Math.max(0, Math.min(1, this.config.freedom + (Math.random() - 0.5) * 0.4));
       v.speed = Math.min(this.desiredSpeed(v), 8);
       this.vehicles.push(v);
       this.stats.spawned += 1;
@@ -304,50 +307,81 @@ export class Simulation {
     return null;
   }
 
-  /* ----------------------- lane changes ----------------------- */
+  /* ----------------------- deviations ----------------------- */
 
   /**
-   * Discretionary lane changing. A vehicle on a multi-lane road keeps to its
-   * (rightmost) plan lane by default, slides one lane inward to overtake a slow
-   * leader when there is room and a safe gap, and returns to the plan lane once
-   * past — or before the next junction (a change can never span a junction, and
-   * routes only ever leave from the plan lane). Drivers that respect discipline
-   * overtake only when clearly held up and merge back promptly; the rest are
-   * more eager and linger in the inner lane.
+   * Discretionary deviation. A strict driver (freedom 0) always follows its
+   * plan lane and queues. With freedom, a vehicle held up by an obstacle ahead
+   * (a stopped or much slower vehicle blocking its path) will pull into a free
+   * adjacent lane — in its direction of travel — that still reaches its exit,
+   * commit to it and carry on. Higher freedom acts on milder slow-downs and
+   * accepts smaller gaps, so traffic flows more freely (if less tidily).
    */
-  private decideLaneChange(v: Vehicle): void {
+  private decideDeviation(v: Vehicle, dt: number): void {
     if (!isLane(v.current)) return;
     const plan = v.current as Lane;
-    const distToEnd = plan.poly.length - v.s;
-    const returnZone = Math.max(16, v.speed * 1.4);
-    const desired = this.desiredSpeed(v);
 
-    // Already straddling / committed to a change: decide only when to merge back.
+    // A deviation already under way: once across, commit to the new lane.
     if (v.offsetLane) {
-      if (v.offsetTarget === 1) {
-        const lead = this.planLeader(v);
-        const stillHeldUp = this.wantsOvertake(v, lead, desired);
-        if (distToEnd < returnZone) v.returnToLane(); // junction ahead: get back
-        else if (v.disciplined && !stillHeldUp) v.returnToLane(); // pass complete
-      }
+      if (v.offsetTarget === 1 && v.offset >= 0.97) this.commitDeviation(v, plan);
       return;
     }
 
-    // Centred on the plan lane: consider starting an overtake into the inner lane.
-    if (!plan.inner) return; // already the innermost lane (nothing to pass into)
-    if (distToEnd < OVERTAKE_MIN_ROOM) return; // not enough room before the junction
-    if (v.s < OVERTAKE_SETTLE) return; // let traffic settle just after a junction/merge
-    const lead = this.planLeader(v);
-    if (!this.wantsOvertake(v, lead, desired)) return;
+    if (v.freedom <= 0) return; // strict driver: never deviates
+    const distToEnd = plan.poly.length - v.s;
+    if (distToEnd < DEVIATE_MIN_ROOM || v.s < DEVIATE_SETTLE) return; // no room at the node
 
-    const total = plan.poly.length;
-    const f = total > 0 ? Math.min(v.s / total, 1) : 0;
-    const target = plan.inner.poly.posAt(f * plan.inner.poly.length);
-    if (!this.laneChangeClear(v, plan.poly.dirAt(v.s), target)) return;
-    v.startChange(plan.inner);
+    const desired = this.desiredSpeed(v);
+    const lead = this.planLeader(v);
+    if (!lead || lead.gap < 0 || lead.gap > DEVIATE_TRIGGER_GAP) return;
+    if (lead.speed >= desired - DEVIATE_SPEED_DEFICIT) return; // not actually held up
+    // How blocked we are (1 = obstacle dead stopped). Strict drivers only act on
+    // a near-total block; freer drivers go around milder slow-downs too.
+    const severity = Math.min(1, 1 - lead.speed / Math.max(desired, 1));
+    if (v.freedom < 0.2 + 0.6 * (1 - severity)) return;
+    // Rate-limit how quickly a held-up driver commits to pulling out.
+    if (Math.random() > v.freedom * DEVIATE_RATE * dt) return;
+
+    // Try the inner (overtaking) side first, then the outer — whichever is free
+    // and still leads to the destination.
+    if (this.tryDeviate(v, plan, plan.inner)) return;
+    this.tryDeviate(v, plan, plan.outer);
   }
 
-  /** Nearest vehicle ahead on the vehicle's own plan lane (the slow car to pass). */
+  /** Start a deviation into `lane` if it is clear and still reaches the exit. */
+  private tryDeviate(v: Vehicle, plan: Lane, lane: Lane | undefined): boolean {
+    if (!lane) return false;
+    const f = plan.poly.length > 0 ? Math.min(v.s / plan.poly.length, 1) : 0;
+    const target = lane.poly.posAt(f * lane.poly.length);
+    if (!this.laneChangeClear(v, plan.poly.dirAt(v.s), target)) return false;
+    const route = planRouteTo(lane, v.dest);
+    if (!route) return false; // that lane can't reach our exit
+    v.startChange(lane);
+    v.pendingRoute = route;
+    return true;
+  }
+
+  /** Commit a completed deviation: switch onto the new lane and continue. */
+  private commitDeviation(v: Vehicle, plan: Lane): void {
+    const lane = v.offsetLane!;
+    const route = v.pendingRoute;
+    if (!route || route[0] !== lane) {
+      v.returnToLane(); // stale plan: ease back instead
+      return;
+    }
+    const f = plan.poly.length > 0 ? v.s / plan.poly.length : 0;
+    v.route = route;
+    v.routeIndex = 0;
+    v.s = Math.min(f * lane.poly.length, lane.poly.length);
+    v.offsetLane = null;
+    v.offset = 0;
+    v.offsetTarget = 0;
+    v.lateralVel = 0;
+    v.pendingRoute = null;
+    v.clearedControl = null;
+  }
+
+  /** Nearest vehicle ahead on the vehicle's own plan lane (the obstacle). */
   private planLeader(v: Vehicle): LeaderInfo | null {
     const same = this.occ.get(v.current.id);
     if (!same) return null;
@@ -359,22 +393,14 @@ export class Simulation {
     return best ? { gap: best.s - best.type.length - v.s, speed: best.speed } : null;
   }
 
-  /** Whether `v` is held up enough behind `lead` to justify overtaking. */
-  private wantsOvertake(v: Vehicle, lead: LeaderInfo | null, desired: number): boolean {
-    if (!lead) return false;
-    if (lead.speed < OVERTAKE_MIN_LEAD_SPEED) return false; // a queue, not a slow cruiser
-    const gapTrig = v.disciplined ? OVERTAKE_GAP : OVERTAKE_GAP_AGGR;
-    const deficit = v.disciplined ? SPEED_DEFICIT : SPEED_DEFICIT_AGGR;
-    return lead.gap >= 0 && lead.gap < gapTrig && lead.speed < desired - deficit;
-  }
-
   /**
    * Lateral gap acceptance: is the target lane clear around `target` (the point
    * the vehicle would occupy)? Scans the spatial hash for any vehicle within a
-   * lane-width laterally and the required clearance fore/aft.
+   * lane-width laterally and the required clearance fore/aft. Freer drivers
+   * accept a smaller gap behind.
    */
   private laneChangeClear(v: Vehicle, dir: Vec2, target: Vec2): boolean {
-    const back = v.disciplined ? ACCEPT_BACK : ACCEPT_BACK_AGGR;
+    const back = ACCEPT_BACK - (ACCEPT_BACK - ACCEPT_BACK_MIN) * v.freedom;
     const cx = Math.floor(target.x / GRID_CELL);
     const cy = Math.floor(target.y / GRID_CELL);
     for (let gx = cx - 2; gx <= cx + 2; gx++) {

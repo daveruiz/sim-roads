@@ -126,9 +126,9 @@ export function buildUI(app: App, root: HTMLElement): void {
     }, (v) => `${v.toFixed(2)}×`)
   );
   simPanel.appendChild(
-    slider("Uso de carriles interiores", 0, 1, 0.05, () => app.sim.config.laneStyle, (v) => {
-      app.sim.config.laneStyle = v;
-    }, (v) => (v === 0 ? "siempre derecha" : `${Math.round(v * 100)}%`))
+    slider("Libertad para esquivar", 0, 1, 0.05, () => app.sim.config.freedom, (v) => {
+      app.sim.config.freedom = v;
+    }, (v) => (v === 0 ? "estricto" : `${Math.round(v * 100)}%`))
   );
 
   simPanel.appendChild(label("Tipos de vehículo"));
