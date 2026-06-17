@@ -264,17 +264,18 @@ function mulberry32(a: number): () => number {
 }
 
 /** Cross intersection hub: four arms, one axis given priority over the other. */
-function crossHub(net: RoadNetwork, cx: number, cy: number, rng: () => number): Ports {
-  const arm = 40;
+function crossHub(net: RoadNetwork, cx: number, cy: number, rng: () => number, lanes = 2): Ports {
+  const arm = 48;
   const c = net.addNode({ x: cx, y: cy }).id;
   const N = net.addNode({ x: cx, y: cy - arm }).id;
   const S = net.addNode({ x: cx, y: cy + arm }).id;
   const E = net.addNode({ x: cx + arm, y: cy }).id;
   const W = net.addNode({ x: cx - arm, y: cy }).id;
-  const sN = net.addSegment(N, c);
-  const sS = net.addSegment(S, c);
-  const sE = net.addSegment(E, c);
-  const sW = net.addSegment(W, c);
+  const opts = { lanesForward: lanes, lanesBackward: lanes };
+  const sN = net.addSegment(N, c, opts);
+  const sS = net.addSegment(S, c, opts);
+  const sE = net.addSegment(E, c, opts);
+  const sW = net.addSegment(W, c, opts);
   const sign = rng() < 0.5 ? "stop" : "yield";
   if (rng() < 0.5) {
     net.setSign(sN.id, c, sign);
@@ -286,41 +287,80 @@ function crossHub(net: RoadNetwork, cx: number, cy: number, rng: () => number): 
   return { N, E, S, W };
 }
 
-/** Roundabout hub (2 or 3 lanes) with four spokes mapped to N/E/S/W ports. */
+/** Roundabout hub with four spokes mapped to N/E/S/W ports (size/lanes vary). */
 function roundaboutHub(net: RoadNetwork, cx: number, cy: number, rng: () => number): Ports {
   const lanes = rng() < 0.5 ? 2 : 3;
+  const R = 28 + Math.floor(rng() * 14); // 28..41
   const exts = addRoundabout(
     net,
     { x: cx, y: cy },
-    30,
-    18,
+    R,
+    18 + Math.floor(rng() * 8),
     [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2],
-    30,
+    34,
     lanes
   );
   return { E: exts[0], S: exts[1], W: exts[2], N: exts[3] };
 }
 
-/** Generate a city of `cols`×`rows` hubs joined by arterials (seeded). */
-function generateCity(cols: number, rows: number, seed: number, spacing = 240): RoadNetwork {
+/** Join two hub ports with a multi-lane two-way arterial (a few are 3-lane). */
+function arterial(net: RoadNetwork, fromPort: string, toPort: string, rng: () => number): void {
+  const lanes = rng() < 0.25 ? 3 : 2;
+  const speed = 16 + rng() * 8; // ~58..86 km/h
+  net.addSegment(fromPort, toPort, {
+    lanesForward: lanes,
+    lanesBackward: lanes,
+    speedLimit: speed,
+  });
+}
+
+/**
+ * Generate a sprawling city of `cols`×`rows` hubs joined by multi-lane
+ * arterials (seeded). Irregular per-row/column spacing, jittered hub positions
+ * and missing interior hubs break up the grid; the jitter is bounded so through
+ * movements stay near-straight (a sharp kink would be read as a turn and choke
+ * a lane). Unconnected ports become edge terminals (traffic sources/sinks).
+ */
+function generateCity(cols: number, rows: number, seed: number, spacing = 300): RoadNetwork {
   const net = new RoadNetwork();
   const rng = mulberry32(seed);
-  const grid: Ports[][] = [];
+
+  // Irregular gridlines: each gap varies, so rows/columns aren't evenly spaced.
+  const colX: number[] = [0];
+  for (let c = 1; c < cols; c++) colX.push(colX[c - 1] + spacing * (0.75 + rng() * 0.6));
+  const rowY: number[] = [0];
+  for (let r = 1; r < rows; r++) rowY.push(rowY[r - 1] + spacing * (0.75 + rng() * 0.6));
+  const midX = colX[cols - 1] / 2;
+  const midY = rowY[rows - 1] / 2;
+  const jit = spacing * 0.18; // bounded so arterials meet hubs near-straight
+
+  const grid: (Ports | null)[][] = [];
   for (let r = 0; r < rows; r++) {
-    const row: Ports[] = [];
+    const row: (Ports | null)[] = [];
     for (let c = 0; c < cols; c++) {
-      const cx = (c - (cols - 1) / 2) * spacing + (rng() - 0.5) * 50;
-      const cy = (r - (rows - 1) / 2) * spacing + (rng() - 0.5) * 50;
-      row.push(rng() < 0.28 ? roundaboutHub(net, cx, cy, rng) : crossHub(net, cx, cy, rng));
+      const edge = r === 0 || c === 0 || r === rows - 1 || c === cols - 1;
+      if (!edge && rng() < 0.14) {
+        row.push(null); // an interior gap (park / block) — not every cell is a hub
+        continue;
+      }
+      const cx = colX[c] - midX + (rng() - 0.5) * jit;
+      const cy = rowY[r] - midY + (rng() - 0.5) * jit;
+      const lanes = rng() < 0.3 ? 3 : 2;
+      row.push(rng() < 0.34 ? roundaboutHub(net, cx, cy, rng) : crossHub(net, cx, cy, rng, lanes));
     }
     grid.push(row);
   }
-  // Arterials to the right and bottom neighbours (occasionally skipped so the
-  // network isn't a perfect grid). Unconnected ports stay as edge terminals.
+
+  // Arterials to the right and bottom neighbours (some skipped). Unconnected
+  // ports stay as edge terminals.
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      if (c + 1 < cols && rng() > 0.12) net.addSegment(grid[r][c].E, grid[r][c + 1].W);
-      if (r + 1 < rows && rng() > 0.12) net.addSegment(grid[r][c].S, grid[r + 1][c].N);
+      const a = grid[r][c];
+      if (!a) continue;
+      const right = c + 1 < cols ? grid[r][c + 1] : null;
+      const down = r + 1 < rows ? grid[r + 1][c] : null;
+      if (right && rng() > 0.16) arterial(net, a.E, right.W, rng);
+      if (down && rng() > 0.16) arterial(net, a.S, down.N, rng);
     }
   }
   return net;
@@ -335,5 +375,5 @@ export const PRESETS: Preset[] = [
   { id: "exit", label: "Salida de autovía", build: highwayExit },
   { id: "scurves", label: "Carretera con curvas", build: sCurves },
   { id: "city", label: "Ciudad (mapa grande)", build: cityMap },
-  { id: "metropolis", label: "Metrópolis (generada)", build: () => generateCity(5, 4, 7) },
+  { id: "metropolis", label: "Metrópolis (generada)", build: () => generateCity(8, 6, 7) },
 ];
