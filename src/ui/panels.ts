@@ -94,11 +94,52 @@ export function buildUI(app: App, root: HTMLElement): void {
   );
   editorPanel.appendChild(fileRow);
 
+  // Real-world maps from OpenStreetMap. Bounding boxes are small, dense slices
+  // (south,west,north,east); they download live from Overpass in the browser.
+  const CITIES: { label: string; bbox: [number, number, number, number] }[] = [
+    { label: "Nueva York — Midtown", bbox: [40.7500, -73.9900, 40.7620, -73.9750] },
+    { label: "Barcelona — Eixample", bbox: [41.3840, 2.1620, 41.3905, 2.1740] },
+    { label: "Londres — City", bbox: [51.5100, -0.0950, 51.5180, -0.0820] },
+    { label: "París — Châtelet", bbox: [48.8580, 2.3380, 48.8650, 2.3520] },
+  ];
+
+  const runOsm = async (
+    bbox: [number, number, number, number],
+    btn: HTMLButtonElement,
+    busyText: string,
+    idleText: string
+  ): Promise<void> => {
+    btn.disabled = true;
+    btn.textContent = busyText;
+    try {
+      const ok = await app.importOSM(bbox);
+      if (!ok) alert("No se encontraron vías de tráfico en esa zona.");
+      else app.onChange();
+    } catch {
+      alert("No se pudo descargar de Overpass (zona demasiado grande, límite de uso o sin conexión).");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = idleText;
+    }
+  };
+
+  editorPanel.appendChild(label("Ciudades reales (OSM)"));
+  const cityRow = el("div", "row");
+  const citySel = document.createElement("select");
+  citySel.className = "grow";
+  CITIES.forEach((c, i) => citySel.append(option(String(i), c.label)));
+  cityRow.appendChild(citySel);
+  const cityBtn = button("Cargar", async () => {
+    const city = CITIES[parseInt(citySel.value, 10)];
+    await runOsm(city.bbox, cityBtn, "Descargando…", "Cargar");
+  });
+  cityRow.appendChild(cityBtn);
+  editorPanel.appendChild(cityRow);
+
   const osmRow = el("div", "row wrap");
-  const osmBtn = button("🗺️ Importar zona real (OSM)", async () => {
-    // Default sample: a slice of Barcelona's Eixample (grid with chamfered corners).
+  const osmBtn = button("🗺️ Importar otra zona…", async () => {
     const input = prompt(
-      "Zona a importar desde OpenStreetMap\n(sur,oeste,norte,este en lat/lon).\nÁreas pequeñas (≈1 km) van mejor.",
+      "Zona a importar desde OpenStreetMap\n(sur,oeste,norte,este en lat/lon).\nÁreas pequeñas (≈1-2 km) van mejor.",
       "41.3840,2.1620,41.3905,2.1740"
     );
     if (!input) return;
@@ -107,18 +148,7 @@ export function buildUI(app: App, root: HTMLElement): void {
       alert("Coordenadas no válidas. Formato: sur,oeste,norte,este");
       return;
     }
-    osmBtn.disabled = true;
-    osmBtn.textContent = "Descargando…";
-    try {
-      const ok = await app.importOSM(bbox as [number, number, number, number]);
-      if (!ok) alert("No se encontraron vías de tráfico en esa zona.");
-      else app.onChange();
-    } catch (e) {
-      alert("No se pudo descargar de Overpass (zona demasiado grande, límite de uso o sin conexión).");
-    } finally {
-      osmBtn.disabled = false;
-      osmBtn.textContent = "🗺️ Importar zona real (OSM)";
-    }
+    await runOsm(bbox as [number, number, number, number], osmBtn, "Descargando…", "🗺️ Importar otra zona…");
   });
   osmRow.append(osmBtn);
   editorPanel.appendChild(osmRow);
